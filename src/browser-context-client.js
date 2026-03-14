@@ -364,6 +364,133 @@ export class KlingBrowserContextClient {
     });
   }
 
+  async captureOmniVideoFlow({
+    imagePath,
+    waitAfterUploadMs = 25000,
+    maxEvents = 50,
+  }) {
+    return this.runExclusive(async () => {
+      if (!this.browser || !this.context) {
+        this.browser = await chromium.launch({
+          executablePath: this.executablePath,
+          headless: this.headless,
+          args: ["--disable-blink-features=AutomationControlled"],
+        });
+
+        this.context = await this.browser.newContext({
+          viewport: { width: 1440, height: 960 },
+          locale: "zh-CN",
+          timezoneId: this.timeZone,
+          extraHTTPHeaders: {
+            "Accept-Language": this.acceptLanguage,
+          },
+        });
+
+        if (this.cookie) {
+          const cookies = parseCookieHeader(this.cookie).map((cookie) => ({
+            ...cookie,
+            domain: ".klingai.com",
+            path: "/",
+            httpOnly: false,
+            secure: true,
+            sameSite: "None",
+          }));
+          if (cookies.length) {
+            await this.context.addCookies(cookies);
+          }
+        }
+      }
+
+      const capturePage = await this.context.newPage();
+      const events = [];
+
+      const onRequest = (request) => {
+        const url = request.url();
+        if (
+          url.includes("/api/omni/") ||
+          url.includes("/api/task/") ||
+          url.includes("/api/upload/")
+        ) {
+          events.push({
+            type: "request",
+            method: request.method(),
+            url,
+            postData: request.postData() || null,
+          });
+        }
+      };
+
+      const onResponse = async (response) => {
+        const url = response.url();
+        if (
+          url.includes("/api/omni/") ||
+          url.includes("/api/task/") ||
+          url.includes("/api/upload/")
+        ) {
+          let body = null;
+          try {
+            const contentType = response.headers()["content-type"] || "";
+            if (contentType.includes("application/json")) {
+              body = await response.json();
+            }
+          } catch {
+            // Ignore unreadable response bodies.
+          }
+
+          events.push({
+            type: "response",
+            status: response.status(),
+            url,
+            body,
+          });
+        }
+      };
+
+      this.context.on("request", onRequest);
+      this.context.on("response", onResponse);
+
+      try {
+        await capturePage.goto(`${this.siteBaseUrl}/cn/omni/new?model=video`, {
+          waitUntil: "domcontentloaded",
+          timeout: 60000,
+        }).catch(() => {});
+
+        await capturePage
+          .waitForFunction(
+            () => document.querySelectorAll('input[type="file"]').length >= 2,
+            { timeout: 60000 }
+          )
+          .catch(() => {});
+
+        const fileInputs = await capturePage.$$('input[type="file"]');
+        if (!fileInputs.length) {
+          throw new Error("Omni page did not expose file inputs");
+        }
+
+        await fileInputs[0].setInputFiles(imagePath);
+
+        await capturePage.waitForTimeout(waitAfterUploadMs);
+
+        const state = await capturePage.evaluate(() => ({
+          url: location.href,
+          title: document.title,
+          bodyText: document.body.innerText.slice(0, 2000),
+          uploadInputs: document.querySelectorAll('input[type="file"]').length,
+          proseMirrorCount: document.querySelectorAll(".ProseMirror").length,
+        }));
+
+        return {
+          events: events.slice(0, maxEvents),
+          state,
+        };
+      } finally {
+        this.context.off("request", onRequest);
+        this.context.off("response", onResponse);
+        await capturePage.close().catch(() => {});
+      }
+    });
+  }
+
   async getProfileAndFeatures() {
     return this.request(
       {

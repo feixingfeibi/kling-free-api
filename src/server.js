@@ -228,6 +228,25 @@ app.post("/v2/browser/omni/video-preprocess", async (req, res) => {
   }
 });
 
+app.post("/v2/browser/omni/capture-video-flow", async (req, res) => {
+  try {
+    const { image_path, wait_after_upload_ms, max_events } = req.body || {};
+    if (!image_path) {
+      return res.status(400).json({ ok: false, error: "image_path is required" });
+    }
+
+    const data = await browserClient.captureOmniVideoFlow({
+      imagePath: image_path,
+      waitAfterUploadMs: Number(wait_after_upload_ms || 25000),
+      maxEvents: Number(max_events || 50),
+    });
+
+    res.json({ ok: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/v2/browser/upload/image", async (req, res) => {
   try {
     const { file_path, verify = true } = req.body || {};

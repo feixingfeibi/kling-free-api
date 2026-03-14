@@ -370,6 +370,18 @@ curl -X POST http://127.0.0.1:8010/v2/browser/omni/video-preprocess \
   }'
 ```
 
+### Capture Omni video low-level flow after image upload
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/capture-video-flow \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/absolute/path/to/image.png",
+    "wait_after_upload_ms": 25000,
+    "max_events": 50
+  }'
+```
+
 ## Current limitations
 
 - Upload-to-storage is not proxied yet. This version only wraps Kling's token issue and post-upload verification APIs.
@@ -383,6 +395,7 @@ Current Omni status:
 - direct `task/price` accepts the type, but may return `status: 6`
 - current message: `意图识别参数缺失`
 - low-level Omni helper endpoints are now exposed, but the final high-level Omni video builder is not finished yet
+- a capture endpoint now exists to record the actual Omni upload -> recognize -> template -> price flow
 
 ## Agent-Browser Findings
 
