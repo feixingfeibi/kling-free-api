@@ -1,129 +1,158 @@
 # kling-free-api
 
-`kling-free-api` is a minimal private-web API wrapper for Kling's consumer site.
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-43853D?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-4.x-000000?logo=express&logoColor=white)](https://expressjs.com/)
+[![Playwright](https://img.shields.io/badge/Playwright-browser--signed-45BA63?logo=playwright&logoColor=white)](https://playwright.dev/)
+[![Kling Web](https://img.shields.io/badge/Kling-consumer_web_route-111111)](https://app.klingai.com/)
 
-It is modeled after the architecture idea in `jimeng-free-api-all`, but not its protocol:
+**English** | [简体中文](./README.zh-CN.md)
 
-- `jimeng-free-api-all` uses web-session cookies and browser-like requests to call Jimeng's private web endpoints.
-- Kling's consumer site does the same pattern, but the actual endpoints are different:
-  - `GET /api/user/profile_and_features`
-  - `GET /api/upload/issue/token?filename=...`
-  - `GET /api/upload/verify/token`
-  - `GET /api/upload/verify/video`
-  - `GET /api/upload/verify/audio`
-  - `POST /api/task/submit`
-  - `GET /api/task/status?taskId=...`
+`kling-free-api` is a local wrapper around Kling's consumer web endpoints.
 
-This prototype intentionally exposes the smallest stable layer first:
+It does **not** use the old enterprise `api-beijing.klingai.com` route as the primary path.  
+Instead, it reuses your browser login state from `app.klingai.com` and exposes a practical local API for:
 
-- session check
-- upload token issue
-- upload token verify
-- raw task submit
-- task status query
-- polling
+- auth checks
+- signed browser-context requests
+- media upload helpers
+- task submit / task polling
+- built-in task builders for text-to-video, image-to-video, first-last-frame, and Omni video
 
-It does not yet try to hide Kling's internal `task` payload schema behind a fake "official" API. The payload structure still depends on individual web tools and frontend chunks.
+## Overview
 
-There is one confirmed blocker for real end-to-end replay:
+This project exists because Kling's web app relies on:
 
-- Kling's frontend adds signed URL parameters such as `__NS_hxfalcon` and `caver`
-- without that signing layer, some `/api/...` calls fall back to SPA HTML instead of JSON
+- private `/api/...` endpoints
+- browser session cookies
+- signed request parameters such as `__NS_hxfalcon` and `caver`
 
-So this repository should currently be treated as:
+Plain HTTP replay is fragile.  
+The stable path in this repository is the **browser-signed** route under `v2/browser/*`.
 
-- a verified direction change away from the enterprise API
-- a stable scaffold for session, upload, submit, and polling wrappers
-- a now-implemented browser-context forwarding server for signed requests
-- not yet a finished "works for every task body" replay server
+## Status
 
-One concrete payload discovery is now confirmed:
+This project is usable, but still experimental.
 
-- the current web text-to-video flow prices against `type: "m2v_aio2video"`
-- not the older `m2v_txt2video` shape
-- the built-in `/v2/browser/tasks/text-to-video` builder has been verified end-to-end
-- the current 3.0 image-to-video flow also works with `type: "m2v_aio2video"` when `inputs` contains an image URL
-- the current first/last-frame flow also works with `type: "m2v_aio2video"` when `inputs` contains both `input` and `tail_image`
+What is working well:
 
-## Why this route
+- `v2/browser/auth/check`
+- `v2/browser/account/profile`
+- generic browser-signed request forwarding
+- text-to-video submit
+- image-to-video submit
+- first-last-frame submit
+- Omni video submit for:
+  - prompt-only
+  - image-reference inputs
 
-The existing enterprise Kling API skill in this workspace targets `api-beijing.klingai.com`.
+What is intentionally not enabled yet:
 
-This prototype switches to the consumer web route:
+- Omni video with `video_url` / `video_path`
+- a fake "official" public API schema hiding all Kling web payload details
 
-- cookie-based session
-- `withCredentials` style requests
-- browser headers like `Accept-Language` and `Time-Zone`
-- private `/api/...` endpoints used by `app.klingai.com`
+If Omni video receives video reference inputs in the high-level route, the service now returns a clear unsupported error instead of a broken submit flow.
 
-## Setup
+## Why This Project
 
-1. Copy `.env.example` to `.env`
-2. Fill `KLING_COOKIE` with your browser cookie string from `https://app.klingai.com`
-   or reuse the persistent browser profile directory
-3. Install deps:
+Compared with the old enterprise-doc route, this project focuses on the path that actually matches the consumer site:
+
+| Route | Primary auth | Signing | Recommended |
+| --- | --- | --- | --- |
+| `v1/*` | cookie header / direct HTTP | manual / limited | only for low-level or legacy debugging |
+| `v2/browser/*` | browser login state | browser-side signing | yes |
+
+In practice:
+
+- use `v2/browser/*` first
+- use `v1/*` only when you explicitly want the low-level direct HTTP wrapper
+
+## Features
+
+### Browser-signed execution
+
+Requests can be signed inside a real page context and then sent through browser `fetch`, which keeps behavior aligned with Kling's current frontend.
+
+### Auto cookie recovery
+
+If the service detects expired auth, it can re-read Kling cookies from local Chrome and retry.  
+If login is still invalid, it returns a normalized `AUTH_EXPIRED` response with the Kling login URL.
+
+### Built-in task builders
+
+The service includes minimal but verified builders for:
+
+- text-to-video
+- image-to-video
+- first-last-frame video
+- Omni video
+
+### Local media upload helpers
+
+You can upload local images and files, then reuse the returned Kling-ready URLs in task payloads.
+
+## Quick Start
+
+### 1. Install
 
 ```bash
 npm install
 ```
 
-4. Start the server:
+### 2. Configure
+
+Copy `.env.example` to `.env`.
+
+Important fields:
+
+- `PORT`
+- `KLING_COOKIE`
+- `KLING_API_BASE_URL`
+- `KLING_SITE_BASE_URL`
+- `KLING_BROWSER_EXECUTABLE_PATH`
+- `KLING_BROWSER_USER_DATA_DIR`
+- `KLING_BROWSER_HEADLESS`
+- `KLING_BROWSER_REQUEST_TIMEOUT_MS`
+- `KLING_BROWSER_MODULE_URL`
+
+Notes:
+
+- If `KLING_COOKIE` is empty, the service will try to read Kling cookies from local Chrome.
+- The default consumer site is `https://app.klingai.com`.
+- The default API origin is `https://api-app-cn.klingai.com`.
+
+### 3. Start
 
 ```bash
 npm start
 ```
 
-Default port is `8010`.
-
-Current defaults:
-
-- API domain: `https://api-app-cn.klingai.com`
-- Site origin / Referer: `https://app.klingai.com`
-- Browser executable: agent-browser installed Chrome
-- Browser profile dir: `.browser-profile`
-- Browser request helper: set `KLING_BROWSER_MODULE_URL` if auto-discovery misses the current helper chunk
-
-Recommended for the current Kling build:
-
-```bash
-export KLING_BROWSER_MODULE_URL="https://p1-kling.klingai.com/kcdn/cdn-kcdn112452/kling-web/assets/js/index-BrvXf0G_.js"
-```
-
-If `KLING_COOKIE` is not set, the server now tries to read Kling cookies from local Chrome automatically via `browser_cookie3`.
-
-Fast local start:
+Or use the helper:
 
 ```bash
 ./scripts/run_local.sh
 ```
 
-## Endpoints
+Default local address:
 
-### Health
+```text
+http://127.0.0.1:8010
+```
+
+## Authentication Flow
+
+Check service health:
 
 ```bash
 curl http://127.0.0.1:8010/health
 ```
 
-### Validate login state
-
-```bash
-curl http://127.0.0.1:8010/v1/account/profile
-```
-
-### Validate login state through browser-context forwarding
-
-```bash
-curl http://127.0.0.1:8010/v2/browser/account/profile
-```
-
-### Check whether browser auth is still valid
+Check whether browser auth is still valid:
 
 ```bash
 curl http://127.0.0.1:8010/v2/browser/auth/check
 ```
 
-If Kling login is still valid:
+Valid auth:
 
 ```json
 {
@@ -133,7 +162,7 @@ If Kling login is still valid:
 }
 ```
 
-If Kling login has expired:
+Expired auth:
 
 ```json
 {
@@ -144,58 +173,48 @@ If Kling login has expired:
 }
 ```
 
-### Issue upload token
+If auth expires, log in again in a real browser first:
 
-```bash
-curl "http://127.0.0.1:8010/v1/upload/issue-token?filename=demo.png"
+```text
+https://app.klingai.com/cn/
 ```
 
-### Verify uploaded resource
+Then retry `GET /v2/browser/auth/check`.
 
-```bash
-curl -X POST http://127.0.0.1:8010/v1/upload/verify \
-  -H "Content-Type: application/json" \
-  -d '{"token":"UPLOAD_TOKEN","type":"image"}'
-```
+## API Summary
 
-### Submit a raw task
+### Core browser routes
 
-```bash
-curl -X POST http://127.0.0.1:8010/v1/tasks/submit \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": {
-      "type": "video",
-      "inputs": [],
-      "arguments": []
-    }
-  }'
-```
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v2/browser/health` | browser-side runtime health |
+| `GET` | `/v2/browser/auth/check` | auth status |
+| `GET` | `/v2/browser/account/profile` | profile and features |
+| `POST` | `/v2/browser/request` | generic signed request proxy |
+| `POST` | `/v2/browser/upload/image` | upload local image |
+| `POST` | `/v2/browser/upload/file` | upload local file |
+| `POST` | `/v2/browser/tasks/submit` | submit raw task body |
+| `POST` | `/v2/browser/tasks/text-to-video` | built-in text-to-video |
+| `POST` | `/v2/browser/tasks/image-to-video` | built-in image-to-video |
+| `POST` | `/v2/browser/tasks/first-last-frame` | built-in first/last-frame |
+| `POST` | `/v2/browser/tasks/omni-video` | built-in Omni video |
+| `GET` | `/v2/browser/tasks/:taskId` | task status |
+| `GET` | `/v2/browser/tasks/:taskId/poll` | polling helper |
 
-### Submit and poll
+### Legacy / low-level routes
 
-```bash
-curl -X POST http://127.0.0.1:8010/v1/tasks/submit \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": {
-      "type": "video",
-      "inputs": [],
-      "arguments": []
-    },
-    "poll": true,
-    "poll_interval_ms": 5000,
-    "poll_timeout_ms": 300000
-  }'
-```
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/account/profile` | direct HTTP profile |
+| `GET` | `/v1/upload/issue-token` | direct HTTP upload token |
+| `POST` | `/v1/upload/verify` | direct HTTP upload verify |
+| `POST` | `/v1/tasks/submit` | direct HTTP raw submit |
+| `GET` | `/v1/tasks/:taskId` | direct HTTP task status |
+| `GET` | `/v1/tasks/:taskId/poll` | direct HTTP polling |
 
-### Query task status
+## Examples
 
-```bash
-curl http://127.0.0.1:8010/v1/tasks/TASK_ID
-```
-
-### Send a signed browser-context request
+### Generic signed browser request
 
 ```bash
 curl -X POST http://127.0.0.1:8010/v2/browser/request \
@@ -205,28 +224,11 @@ curl -X POST http://127.0.0.1:8010/v2/browser/request \
       "url": "/api/user/profile_and_features",
       "method": "GET",
       "params": {}
-    },
-    "requestCustomConfig": {
-      "ifIgnore401Interceptor": true
     }
   }'
 ```
 
-### Submit a task through browser-context forwarding
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/tasks/submit \
-  -H "Content-Type: application/json" \
-  -d '{
-    "task": {
-      "type": "video",
-      "inputs": [],
-      "arguments": []
-    }
-  }'
-```
-
-### Submit text-to-video with the built-in minimal builder
+### Text to video
 
 ```bash
 curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-video \
@@ -241,81 +243,18 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-video \
   }'
 ```
 
-Observed verified result in this workspace:
-
-- request returned `200`
-- task was created successfully
-- example task id: `305455133152156`
-- initial task status: `5` (queued/running pipeline)
-
-### Submit image-to-video with the built-in minimal builder
+### Image to video
 
 ```bash
 curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-to-video \
   -H "Content-Type: application/json" \
   -d '{
     "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452",
-    "prompt": "subtle cinematic motion, natural camera push-in, realistic lighting",
-    "duration": "5",
-    "aspect_ratio": "16:9",
-    "kling_version": "3.0",
-    "model_mode": "std",
-    "enable_audio": "true"
+    "prompt": "subtle cinematic motion, natural camera push-in, realistic lighting"
   }'
 ```
 
-You can also pass a local file path instead of `image_url`:
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-to-video \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_path": "/absolute/path/to/image.png",
-    "prompt": "subtle cinematic motion, natural camera push-in, realistic lighting",
-    "duration": "5",
-    "aspect_ratio": "16:9",
-    "kling_version": "3.0",
-    "model_mode": "std",
-    "enable_audio": "true"
-  }'
-```
-
-Observed verified result in this workspace:
-
-- request returned `200`
-- task was created successfully
-- example task id: `305455855145523`
-- initial task status: `5`
-
-### Upload a local image and get a Kling-ready URL
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/upload/image \
-  -H "Content-Type: application/json" \
-  -d '{
-    "file_path": "/absolute/path/to/image.png"
-  }'
-```
-
-Observed verified result in this workspace:
-
-- local PNG upload succeeded
-- response included a stable `url`
-- that uploaded image URL was then used to create image-to-video successfully
-
-### Generic local file upload
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/upload/file \
-  -H "Content-Type: application/json" \
-  -d '{
-    "file_path": "/absolute/path/to/file.png",
-    "type": "image",
-    "file_type": "image"
-  }'
-```
-
-### Submit first/last-frame video with the built-in minimal builder
+### First / last frame
 
 ```bash
 curl -X POST http://127.0.0.1:8010/v2/browser/tasks/first-last-frame \
@@ -323,263 +262,75 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/first-last-frame \
   -d '{
     "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452",
     "tail_image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_3.png?x-kcdn-pid=112452",
-    "prompt": "smooth transition from first frame to last frame, cinematic movement",
-    "duration": "5",
-    "aspect_ratio": "16:9",
-    "kling_version": "3.0",
-    "model_mode": "std",
-    "enable_audio": "true"
+    "prompt": "smooth transition from first frame to last frame, cinematic movement"
   }'
 ```
 
-You can also use local file paths:
+### Omni video
+
+Prompt-only:
 
 ```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/tasks/first-last-frame \
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/omni-video \
   -H "Content-Type: application/json" \
   -d '{
-    "image_path": "/absolute/path/to/first.png",
-    "tail_image_path": "/absolute/path/to/last.png",
-    "prompt": "smooth transition from first frame to last frame, cinematic movement",
-    "duration": "5",
-    "aspect_ratio": "16:9",
-    "kling_version": "3.0",
-    "model_mode": "std",
-    "enable_audio": "true"
+    "prompt": "a girl slowly turns around on the beach, cinematic lighting"
   }'
 ```
 
-Observed verified result in this workspace:
-
-- request returned `200`
-- task was created successfully
-- example task id: `305456209256466`
-- initial task status: `5`
-
-### Omni recommendation examples
+Image reference:
 
 ```bash
-curl "http://127.0.0.1:8010/v2/browser/omni/recommend?type=m2v_omni_video"
-```
-
-### Omni intent recognition
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/intent-recognition \
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/omni-video \
   -H "Content-Type: application/json" \
   -d '{
-    "type": "m2v_omni_video",
-    "version": "3.0",
-    "prompt": "cinematic scene with strong subject consistency"
+    "prompt": "give <<<image_1>>> a gentle push-in and natural lighting variation",
+    "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452"
   }'
 ```
 
-### Omni submit config template
+## Error Model
 
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/submit-config-template \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "m2v_omni_video",
-    "version": "3.0",
-    "taskInputs": [],
-    "taskArguments": []
-  }'
+Common responses:
+
+| Code | Meaning |
+| --- | --- |
+| `AUTH_EXPIRED` | Kling browser login is no longer valid |
+| `OMNI_VIDEO_INPUT_UNSUPPORTED` | the high-level Omni route does not support video-reference inputs yet |
+| `TASK.MembershipQueueLimit` | current account cannot submit another task right now |
+| `VALID.IllegalArgument` | request payload is invalid |
+| `TASK.TaskPriceSearchFail` | Kling rejected the pricing-stage payload |
+
+## Project Structure
+
+```text
+.
+├── src/
+│   ├── server.js
+│   ├── browser-context-client.js
+│   ├── kling-web-client.js
+│   ├── task-builders.js
+│   └── auth-errors.js
+├── scripts/
+├── .env.example
+└── README.md
 ```
 
-### Omni video preprocess
+## Limitations
 
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/video-preprocess \
-  -H "Content-Type: application/json" \
-  -d '{
-    "video_url": "https://example.com/demo.mp4"
-  }'
-```
+- This project depends on Kling's private web behavior and may break when the frontend changes.
+- The task schema is still model-specific.
+- Omni video high-level execution does not support video-reference inputs yet.
+- This is not an official Kling API.
 
-### Capture Omni video low-level flow after image upload
+## Roadmap
 
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/capture-video-flow \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_path": "/absolute/path/to/image.png",
-    "wait_after_upload_ms": 25000,
-    "max_events": 50
-  }'
-```
+- improve model-specific builders
+- add more verified Omni flows
+- reduce breakage when Kling updates frontend bundles
+- keep the browser-signed path as the primary stable route
 
-### Build Omni video recognition body
+## Disclaimer
 
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/video/build-recognition-body \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "",
-    "richPrompt": "",
-    "klingVersion": "3.0-omni"
-  }'
-```
-
-### Build Omni video template body
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/video/build-template-body \
-  -H "Content-Type: application/json" \
-  -d '{
-    "version": "3.0",
-    "omniRecognition": "RECOGNITION_STRING",
-    "taskInputs": [],
-    "taskArguments": []
-  }'
-```
-
-### Build Omni video price body
-
-```bash
-curl -X POST http://127.0.0.1:8010/v2/browser/omni/video/build-price-body \
-  -H "Content-Type: application/json" \
-  -d '{
-    "omniRecognition": "RECOGNITION_STRING",
-    "klingVersion": "3.0-omni",
-    "modelMode": "pro",
-    "duration": "5",
-    "aspectRatio": "16:9",
-    "imageCount": "1"
-  }'
-```
-
-## Current limitations
-
-- Upload-to-storage is not proxied yet. This version only wraps Kling's token issue and post-upload verification APIs.
-- Model-specific `task` builders are not implemented yet.
-- OpenAI-compatible routes are not implemented yet, because Kling's internal task schema still needs per-tool reverse engineering.
-- Raw HTTP replay still cannot be trusted on its own. The recommended route is now `/v2/browser/*`, which executes signed requests inside the real page context.
-
-Current Omni status:
-
-- `m2v_omni_video` is confirmed as a valid task type
-- direct `task/price` accepts the type, but may return `status: 6`
-- current message: `意图识别参数缺失`
-- low-level Omni helper endpoints are now exposed, but the final high-level Omni video builder is not finished yet
-- a capture endpoint now exists to record the actual Omni upload -> recognize -> template -> price flow
-- `/v2/browser/tasks/omni-video` now supports prompt-only and image-reference inputs
-- video-reference inputs are not enabled in that high-level route yet; `video_url` / `video_path` currently return a clear unsupported error instead of a broken submit flow
-
-## Agent-Browser Findings
-
-With `agent-browser`, the browser page context confirms:
-
-- `Object.jmpOnw_ms` exists and can build the signature input string
-- `Object.jmpOnw_b2h` exists
-- `Object.jmpOnw_send` exists
-- the page runtime exposes the actual API base as `https://api-app-cn.klingai.com`
-
-Example probe:
-
-```bash
-agent-browser --session-name kling open https://app.klingai.com/cn/
-agent-browser --session-name kling eval 'JSON.stringify({
-  has_ms: typeof Object.jmpOnw_ms,
-  has_b2h: typeof Object.jmpOnw_b2h
-})'
-```
-
-And a minimal signing-input probe:
-
-```bash
-agent-browser --session-name kling eval 'Object.jmpOnw_ms({
-  url: location.origin + "/api/user/profile_and_features",
-  query: { caver: "1.0.0" }
-})'
-```
-
-Current result:
-
-- the input string is reproducible in-page
-- the final `__NS_hxfalcon` generation step can be bypassed by browser-context forwarding
-- a real page-init `POST /api/task/price` payload has been captured
-- the current text-to-video body shape is:
-
-```json
-{
-  "type": "m2v_aio2video",
-  "arguments": [
-    {"name":"negative_prompt","value":""},
-    {"name":"duration","value":"5"},
-    {"name":"imageCount","value":"1"},
-    {"name":"kling_version","value":"3.0"},
-    {"name":"prompt","value":"..."},
-    {"name":"rich_prompt","value":""},
-    {"name":"cfg","value":"0.5"},
-    {"name":"aspect_ratio","value":"16:9"},
-    {"name":"camera_json","value":"{\"type\":\"empty\",\"horizontal\":0,\"vertical\":0,\"zoom\":0,\"tilt\":0,\"pan\":0,\"roll\":0}"},
-    {"name":"camera_control_enabled","value":"false"},
-    {"name":"prefer_multi_shots","value":"true"},
-    {"name":"biz","value":"klingai"},
-    {"name":"enable_audio","value":"true"},
-    {"name":"model_mode","value":"std"}
-  ],
-  "inputs": []
-}
-```
-
-The successful submit response also shows that Kling injects some extra internal arguments on submit, including:
-
-- `__deviceType`
-- `__did`
-- `__effect`
-- `__locale`
-- `__platform`
-- `__priority`
-- `__userType`
-
-For image-to-video, the frontend also switches the generated effect suffix from:
-
-- `m2v_aio2video_t2v_v30_720p`
-
-to:
-
-- `m2v_aio2video_i2v_v30_720p`
-
-For first/last-frame mode, the effect becomes:
-
-- `m2v_aio2video_i2v_fflf_v30_720p`
-
-For Omni video, the current confirmed findings are:
-
-- valid task type: `m2v_omni_video`
-- support flow in frontend code:
-  - `/api/omni/pre-skill/recommend`
-  - `/api/omni/intent-recognition`
-  - `/api/omni/submit-config-template`
-  - then `task/price` / `task/submit`
-- the service can now build the three currently known low-level Omni request bodies
-- official recommendation payloads contain structured `resources`
-- a raw `task/price` probe returns `status: 6` with `意图识别参数缺失`
-
-That is another reason browser-context forwarding is the preferred route right now: the frontend runtime can enrich the minimal payload automatically.
-
-## Preferred path now
-
-Use `/v2/browser/*` first.
-
-Reason:
-
-- it imports the same Kling frontend module already loaded by the page
-- it calls `mod.r(...)`, the request wrapper with signing and interceptors
-- signer logic stays inside the real browser runtime
-- Cookie, URL signing, and request conventions stay aligned with the site
-
-## Practical next step
-
-Either keep using browser-context forwarding, or later extract the signer into a pure HTTP implementation.
-
-Then add model-specific builders on top of `/api/task/submit` for:
-
-- text-to-image
-- image-to-video
-- text-to-video
-- omni / multimodal
-
-Once those payload builders are stable, an OpenAI-compatible route can sit above them.
+This project is an unofficial wrapper around Kling's consumer web experience.  
+Use it carefully, respect the target platform, and assume private routes may change without notice.
