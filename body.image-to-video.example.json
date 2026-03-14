@@ -1,0 +1,72 @@
+{
+  "type": "m2v_aio2video",
+  "arguments": [
+    {
+      "name": "negative_prompt",
+      "value": ""
+    },
+    {
+      "name": "duration",
+      "value": "5"
+    },
+    {
+      "name": "imageCount",
+      "value": "1"
+    },
+    {
+      "name": "kling_version",
+      "value": "3.0"
+    },
+    {
+      "name": "prompt",
+      "value": "subtle cinematic motion, natural camera push-in, realistic lighting"
+    },
+    {
+      "name": "rich_prompt",
+      "value": ""
+    },
+    {
+      "name": "cfg",
+      "value": "0.5"
+    },
+    {
+      "name": "aspect_ratio",
+      "value": "16:9"
+    },
+    {
+      "name": "camera_json",
+      "value": "{\"type\":\"empty\",\"horizontal\":0,\"vertical\":0,\"zoom\":0,\"tilt\":0,\"pan\":0,\"roll\":0}"
+    },
+    {
+      "name": "camera_control_enabled",
+      "value": "false"
+    },
+    {
+      "name": "prefer_multi_shots",
+      "value": "true"
+    },
+    {
+      "name": "biz",
+      "value": "klingai"
+    },
+    {
+      "name": "enable_audio",
+      "value": "true"
+    },
+    {
+      "name": "model_mode",
+      "value": "std"
+    },
+    {
+      "name": "tail_image_enabled",
+      "value": "false"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "input",
+      "inputType": "URL",
+      "url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452"
+    }
+  ]
+}

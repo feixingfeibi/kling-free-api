@@ -42,6 +42,7 @@ One concrete payload discovery is now confirmed:
 - the current web text-to-video flow prices against `type: "m2v_aio2video"`
 - not the older `m2v_txt2video` shape
 - the built-in `/v2/browser/tasks/text-to-video` builder has been verified end-to-end
+- the current 3.0 image-to-video flow also works with `type: "m2v_aio2video"` when `inputs` contains an image URL
 
 ## Why this route
 
@@ -219,6 +220,29 @@ Observed verified result in this workspace:
 - example task id: `305455133152156`
 - initial task status: `5` (queued/running pipeline)
 
+### Submit image-to-video with the built-in minimal builder
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-to-video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452",
+    "prompt": "subtle cinematic motion, natural camera push-in, realistic lighting",
+    "duration": "5",
+    "aspect_ratio": "16:9",
+    "kling_version": "3.0",
+    "model_mode": "std",
+    "enable_audio": "true"
+  }'
+```
+
+Observed verified result in this workspace:
+
+- request returned `200`
+- task was created successfully
+- example task id: `305455855145523`
+- initial task status: `5`
+
 ## Current limitations
 
 - Upload-to-storage is not proxied yet. This version only wraps Kling's token issue and post-upload verification APIs.
@@ -293,6 +317,14 @@ The successful submit response also shows that Kling injects some extra internal
 - `__platform`
 - `__priority`
 - `__userType`
+
+For image-to-video, the frontend also switches the generated effect suffix from:
+
+- `m2v_aio2video_t2v_v30_720p`
+
+to:
+
+- `m2v_aio2video_i2v_v30_720p`
 
 That is another reason browser-context forwarding is the preferred route right now: the frontend runtime can enrich the minimal payload automatically.
 
