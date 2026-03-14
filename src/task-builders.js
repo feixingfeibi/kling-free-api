@@ -163,3 +163,95 @@ export function buildFirstLastFrameVideoTask({
     ],
   };
 }
+
+export function buildOmniVideoRecognitionBody({
+  prompt = "",
+  richPrompt = "",
+  skill = "",
+  klingVersion = "3.0-omni",
+  enableAudio = true,
+  customizeMultiShots = false,
+  preferMultiShots = "true",
+  callbackPayloads,
+} = {}) {
+  return {
+    type: "m2v_omni_video",
+    inputs: [],
+    arguments: [
+      { name: "skill", value: String(skill) },
+      { name: "biz", value: "klingai" },
+      { name: "kling_version", value: String(klingVersion) },
+      { name: "customize_multi_shots", value: customizeMultiShots },
+      { name: "prefer_multi_shots", value: String(preferMultiShots) },
+      { name: "prompt", value: String(prompt) },
+      { name: "rich_prompt", value: String(richPrompt) },
+      { name: "enable_audio", value: Boolean(enableAudio) },
+    ],
+    callbackPayloads:
+      callbackPayloads || [
+        { name: "settingKeys", value: "" },
+        { name: "imageMasks", value: "", resources: [] },
+        { name: "subjects", value: "[]" },
+      ],
+  };
+}
+
+export function buildOmniVideoTemplateBody({
+  omniRecognition,
+  taskInputs = [],
+  taskArguments = [],
+  version = "3.0",
+} = {}) {
+  return {
+    type: "m2v_omni_video",
+    version: String(version),
+    omniRecognition: omniRecognition ? String(omniRecognition) : undefined,
+    taskInputs,
+    taskArguments,
+  };
+}
+
+export function buildOmniVideoPriceBody({
+  omniRecognition,
+  prompt = "",
+  richPrompt = "",
+  klingVersion = "3.0-omni",
+  modelMode = "pro",
+  duration = "5",
+  aspectRatio = "16:9",
+  imageCount = "1",
+  creationEntrance = "base",
+  enableAudio = true,
+  customizeMultiShots = false,
+  preferMultiShots = "true",
+  settingKeys = "model_mode|duration|aspect_ratio|imageCount",
+} = {}) {
+  return {
+    type: "m2v_omni_video",
+    inputs: [],
+    arguments: [
+      { name: "skill", value: "" },
+      { name: "biz", value: "klingai" },
+      { name: "kling_version", value: String(klingVersion) },
+      { name: "model_mode", value: String(modelMode), setByUser: false },
+      { name: "duration", value: String(duration), setByUser: false },
+      { name: "aspect_ratio", value: String(aspectRatio), setByUser: false },
+      { name: "imageCount", value: String(imageCount), setByUser: false },
+      { name: "customize_multi_shots", value: customizeMultiShots },
+      { name: "prefer_multi_shots", value: String(preferMultiShots) },
+      { name: "prompt", value: String(prompt) },
+      { name: "rich_prompt", value: String(richPrompt) },
+      { name: "enable_audio", value: Boolean(enableAudio) },
+      {
+        name: "omniRecognition",
+        value: omniRecognition ? String(omniRecognition) : "",
+      },
+      { name: "creationEntrance", value: String(creationEntrance) },
+    ],
+    callbackPayloads: [
+      { name: "settingKeys", value: String(settingKeys) },
+      { name: "imageMasks", value: "", resources: [] },
+      { name: "subjects", value: "[]" },
+    ],
+  };
+}

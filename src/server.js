@@ -11,6 +11,9 @@ import { KlingWebClient } from "./kling-web-client.js";
 import {
   buildFirstLastFrameVideoTask,
   buildImageToVideoTask,
+  buildOmniVideoPriceBody,
+  buildOmniVideoRecognitionBody,
+  buildOmniVideoTemplateBody,
   buildTextToVideoTask,
 } from "./task-builders.js";
 
@@ -56,6 +59,50 @@ function sendError(res, error) {
     error: error.message || "Unknown error",
     data: error.data || null,
   });
+}
+
+function parseCapturedEvents(events = []) {
+  const findLastRequest = (needle) =>
+    [...events]
+      .reverse()
+      .find((event) => event.type === "request" && event.url.includes(needle));
+
+  const findLastResponse = (needle) =>
+    [...events]
+      .reverse()
+      .find((event) => event.type === "response" && event.url.includes(needle));
+
+  const parseJson = (value) => {
+    if (!value || typeof value !== "string") {
+      return null;
+    }
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  };
+
+  return {
+    request: {
+      omni_intent_recognition: parseJson(
+        findLastRequest("/api/omni/intent-recognition")?.postData
+      ),
+      omni_submit_config_template: parseJson(
+        findLastRequest("/api/omni/submit-config-template")?.postData
+      ),
+      task_price: parseJson(findLastRequest("/api/task/price")?.postData),
+      task_submit: parseJson(findLastRequest("/api/task/submit")?.postData),
+    },
+    response: {
+      omni_intent_recognition:
+        findLastResponse("/api/omni/intent-recognition")?.body || null,
+      omni_submit_config_template:
+        findLastResponse("/api/omni/submit-config-template")?.body || null,
+      task_price: findLastResponse("/api/task/price")?.body || null,
+      task_submit: findLastResponse("/api/task/submit")?.body || null,
+    },
+  };
 }
 
 async function uploadLocalImage(filePath) {
@@ -241,7 +288,34 @@ app.post("/v2/browser/omni/capture-video-flow", async (req, res) => {
       maxEvents: Number(max_events || 50),
     });
 
-    res.json({ ok: true, data });
+    res.json({ ok: true, data, parsed: parseCapturedEvents(data.events) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/omni/video/build-recognition-body", async (req, res) => {
+  try {
+    const body = buildOmniVideoRecognitionBody(req.body || {});
+    res.json({ ok: true, data: body });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/omni/video/build-template-body", async (req, res) => {
+  try {
+    const body = buildOmniVideoTemplateBody(req.body || {});
+    res.json({ ok: true, data: body });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/omni/video/build-price-body", async (req, res) => {
+  try {
+    const body = buildOmniVideoPriceBody(req.body || {});
+    res.json({ ok: true, data: body });
   } catch (error) {
     sendError(res, error);
   }

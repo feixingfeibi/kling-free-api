@@ -382,6 +382,46 @@ curl -X POST http://127.0.0.1:8010/v2/browser/omni/capture-video-flow \
   }'
 ```
 
+### Build Omni video recognition body
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/video/build-recognition-body \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "",
+    "richPrompt": "",
+    "klingVersion": "3.0-omni"
+  }'
+```
+
+### Build Omni video template body
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/video/build-template-body \
+  -H "Content-Type: application/json" \
+  -d '{
+    "version": "3.0",
+    "omniRecognition": "RECOGNITION_STRING",
+    "taskInputs": [],
+    "taskArguments": []
+  }'
+```
+
+### Build Omni video price body
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/video/build-price-body \
+  -H "Content-Type: application/json" \
+  -d '{
+    "omniRecognition": "RECOGNITION_STRING",
+    "klingVersion": "3.0-omni",
+    "modelMode": "pro",
+    "duration": "5",
+    "aspectRatio": "16:9",
+    "imageCount": "1"
+  }'
+```
+
 ## Current limitations
 
 - Upload-to-storage is not proxied yet. This version only wraps Kling's token issue and post-upload verification APIs.
@@ -485,6 +525,7 @@ For Omni video, the current confirmed findings are:
   - `/api/omni/intent-recognition`
   - `/api/omni/submit-config-template`
   - then `task/price` / `task/submit`
+- the service can now build the three currently known low-level Omni request bodies
 - official recommendation payloads contain structured `resources`
 - a raw `task/price` probe returns `status: 6` with `意图识别参数缺失`
 
