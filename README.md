@@ -329,12 +329,60 @@ Observed verified result in this workspace:
 - example task id: `305456209256466`
 - initial task status: `5`
 
+### Omni recommendation examples
+
+```bash
+curl "http://127.0.0.1:8010/v2/browser/omni/recommend?type=m2v_omni_video"
+```
+
+### Omni intent recognition
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/intent-recognition \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "m2v_omni_video",
+    "version": "3.0",
+    "prompt": "cinematic scene with strong subject consistency"
+  }'
+```
+
+### Omni submit config template
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/submit-config-template \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "m2v_omni_video",
+    "version": "3.0",
+    "taskInputs": [],
+    "taskArguments": []
+  }'
+```
+
+### Omni video preprocess
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/omni/video-preprocess \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_url": "https://example.com/demo.mp4"
+  }'
+```
+
 ## Current limitations
 
 - Upload-to-storage is not proxied yet. This version only wraps Kling's token issue and post-upload verification APIs.
 - Model-specific `task` builders are not implemented yet.
 - OpenAI-compatible routes are not implemented yet, because Kling's internal task schema still needs per-tool reverse engineering.
 - Raw HTTP replay still cannot be trusted on its own. The recommended route is now `/v2/browser/*`, which executes signed requests inside the real page context.
+
+Current Omni status:
+
+- `m2v_omni_video` is confirmed as a valid task type
+- direct `task/price` accepts the type, but may return `status: 6`
+- current message: `意图识别参数缺失`
+- low-level Omni helper endpoints are now exposed, but the final high-level Omni video builder is not finished yet
 
 ## Agent-Browser Findings
 
@@ -415,6 +463,17 @@ to:
 For first/last-frame mode, the effect becomes:
 
 - `m2v_aio2video_i2v_fflf_v30_720p`
+
+For Omni video, the current confirmed findings are:
+
+- valid task type: `m2v_omni_video`
+- support flow in frontend code:
+  - `/api/omni/pre-skill/recommend`
+  - `/api/omni/intent-recognition`
+  - `/api/omni/submit-config-template`
+  - then `task/price` / `task/submit`
+- official recommendation payloads contain structured `resources`
+- a raw `task/price` probe returns `status: 6` with `意图识别参数缺失`
 
 That is another reason browser-context forwarding is the preferred route right now: the frontend runtime can enrich the minimal payload automatically.
 

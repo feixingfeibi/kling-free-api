@@ -139,6 +139,95 @@ app.post("/v2/browser/request", async (req, res) => {
   }
 });
 
+app.get("/v2/browser/omni/recommend", async (req, res) => {
+  try {
+    const type = String(req.query.type || "");
+    if (!type) {
+      return res.status(400).json({ ok: false, error: "type is required" });
+    }
+
+    const data = await browserClient.request(
+      {
+        url: "/api/omni/pre-skill/recommend",
+        method: "GET",
+        params: { type },
+      },
+      {},
+      308
+    );
+
+    res.json({ ok: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/omni/intent-recognition", async (req, res) => {
+  try {
+    const data = await browserClient.request(
+      {
+        url: "/api/omni/intent-recognition",
+        method: "POST",
+        data: req.body || {},
+      },
+      {},
+      308,
+      Number(req.body?.requestTimeoutMs || config.browserRequestTimeoutMs)
+    );
+
+    res.json({ ok: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/omni/submit-config-template", async (req, res) => {
+  try {
+    const data = await browserClient.request(
+      {
+        url: "/api/omni/submit-config-template",
+        method: "POST",
+        data: req.body || {},
+      },
+      {},
+      308,
+      Number(req.body?.requestTimeoutMs || config.browserRequestTimeoutMs)
+    );
+
+    res.json({ ok: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/omni/video-preprocess", async (req, res) => {
+  try {
+    const { video_url } = req.body || {};
+    if (!video_url) {
+      return res.status(400).json({ ok: false, error: "video_url is required" });
+    }
+
+    const data = await browserClient.request(
+      {
+        url: "/api/task/preprocess",
+        method: "POST",
+        data: {
+          type: "omni_base_video_preprocess",
+          inputs: [{ name: "video", inputType: "URL", url: video_url }],
+          arguments: [{ name: "sam2Mode", value: "startSession" }],
+        },
+      },
+      {},
+      308,
+      Number(req.body?.requestTimeoutMs || config.browserRequestTimeoutMs)
+    );
+
+    res.json({ ok: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
 app.post("/v2/browser/upload/image", async (req, res) => {
   try {
     const { file_path, verify = true } = req.body || {};
