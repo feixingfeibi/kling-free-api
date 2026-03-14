@@ -165,6 +165,7 @@ export function buildFirstLastFrameVideoTask({
 }
 
 export function buildOmniVideoRecognitionBody({
+  inputs = [],
   prompt = "",
   richPrompt = "",
   skill = "",
@@ -176,7 +177,7 @@ export function buildOmniVideoRecognitionBody({
 } = {}) {
   return {
     type: "m2v_omni_video",
-    inputs: [],
+    inputs,
     arguments: [
       { name: "skill", value: String(skill) },
       { name: "biz", value: "klingai" },
@@ -212,9 +213,11 @@ export function buildOmniVideoTemplateBody({
 }
 
 export function buildOmniVideoPriceBody({
+  inputs = [],
   omniRecognition,
   prompt = "",
   richPrompt = "",
+  skill = "",
   klingVersion = "3.0-omni",
   modelMode = "pro",
   duration = "5",
@@ -225,12 +228,13 @@ export function buildOmniVideoPriceBody({
   customizeMultiShots = false,
   preferMultiShots = "true",
   settingKeys = "model_mode|duration|aspect_ratio|imageCount",
+  callbackPayloads,
 } = {}) {
   return {
     type: "m2v_omni_video",
-    inputs: [],
+    inputs,
     arguments: [
-      { name: "skill", value: "" },
+      { name: "skill", value: String(skill) },
       { name: "biz", value: "klingai" },
       { name: "kling_version", value: String(klingVersion) },
       { name: "model_mode", value: String(modelMode), setByUser: false },
@@ -248,10 +252,15 @@ export function buildOmniVideoPriceBody({
       },
       { name: "creationEntrance", value: String(creationEntrance) },
     ],
-    callbackPayloads: [
-      { name: "settingKeys", value: String(settingKeys) },
-      { name: "imageMasks", value: "", resources: [] },
-      { name: "subjects", value: "[]" },
-    ],
+    callbackPayloads:
+      callbackPayloads || [
+        { name: "settingKeys", value: String(settingKeys) },
+        { name: "imageMasks", value: "", resources: [] },
+        { name: "subjects", value: "[]" },
+      ],
   };
+}
+
+export function buildOmniVideoSubmitTask(options = {}) {
+  return buildOmniVideoPriceBody(options);
 }

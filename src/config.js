@@ -26,5 +26,5 @@ export const config = {
 
 export function getCookieFromRequest(req) {
   const headerCookie = req.headers["x-kling-cookie"];
-  return headerCookie || config.cookie;
+  return headerCookie || loadKlingCookieFromChrome() || config.cookie;
 }

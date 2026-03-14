@@ -4,6 +4,11 @@ import cors from "cors";
 import morgan from "morgan";
 
 import { config, getCookieFromRequest } from "./config.js";
+import {
+  isAuthExpiredError,
+  KLING_LOGIN_URL,
+  normalizeAuthError,
+} from "./auth-errors.js";
 import { maskCookie } from "./chrome-cookie.js";
 import { KlingBrowserContextClient } from "./browser-context-client.js";
 import { readLocalFileAsBase64 } from "./file-utils.js";
@@ -13,6 +18,7 @@ import {
   buildImageToVideoTask,
   buildOmniVideoPriceBody,
   buildOmniVideoRecognitionBody,
+  buildOmniVideoSubmitTask,
   buildOmniVideoTemplateBody,
   buildTextToVideoTask,
 } from "./task-builders.js";
@@ -47,17 +53,28 @@ function getClient(req) {
 }
 
 function sendError(res, error) {
+  const normalized = normalizeAuthError(error) || error;
   const status =
-    Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599
-      ? error.status
+    Number.isInteger(normalized?.status) &&
+    normalized.status >= 100 &&
+    normalized.status <= 599
+      ? normalized.status
       : 500;
 
-  console.error("kling-free-api error:", error);
+  console.error("kling-free-api error:", normalized);
 
   res.status(status).json({
     ok: false,
-    error: error.message || "Unknown error",
-    data: error.data || null,
+    error: normalized?.message || "Unknown error",
+    code: normalized?.code || null,
+    data:
+      normalized?.data ||
+      (status === 401
+        ? {
+            reauth_required: true,
+            login_url: KLING_LOGIN_URL,
+          }
+        : null),
   });
 }
 
@@ -106,14 +123,21 @@ function parseCapturedEvents(events = []) {
 }
 
 async function uploadLocalImage(filePath) {
+  return uploadLocalFile(filePath, { type: "image", fileType: "image" });
+}
+
+async function uploadLocalFile(
+  filePath,
+  { type = "image", verify = true, fileType = type } = {}
+) {
   const file = readLocalFileAsBase64(filePath);
   const upload = await browserClient.uploadFile({
     fileName: file.fileName,
     base64: file.base64,
     mimeType: file.mimeType,
-    type: "image",
-    verify: true,
-    fileType: "image",
+    type,
+    verify,
+    fileType,
   });
 
   return {
@@ -121,6 +145,121 @@ async function uploadLocalImage(filePath) {
     file_name: file.fileName,
     mime_type: file.mimeType,
     upload,
+  };
+}
+
+async function submitBrowserTaskAndMaybePoll(
+  task,
+  { poll = false, pollIntervalMs, pollTimeoutMs } = {}
+) {
+  const submitted = await browserClient.submitTask(task);
+
+  if (!poll) {
+    return { submitted, final: null };
+  }
+
+  const taskId = submitted?.data?.task?.id || submitted?.task?.id || submitted?.taskId;
+  if (!taskId) {
+    throw {
+      status: 502,
+      message: "Task submitted but task id was missing in response",
+      data: submitted,
+    };
+  }
+
+  const final = await browserClient.pollTask(taskId, {
+    intervalMs: Number(pollIntervalMs || 5000),
+    timeoutMs: Number(pollTimeoutMs || 300000),
+  });
+
+  return { submitted, final };
+}
+
+function normalizeOmniInputName(type, index) {
+  return `${type}_${index}`;
+}
+
+function normalizeOmniInputType(type = "") {
+  const value = String(type || "").toLowerCase();
+  return value === "video" ? "video" : "image";
+}
+
+async function resolveOmniVideoInputs(body = {}) {
+  const uploaded = {};
+  const inputs = [];
+  let imageIndex = 1;
+  let videoIndex = 1;
+
+  const appendInput = async ({ name, type, url, path }) => {
+    const normalizedType = normalizeOmniInputType(type);
+    const resolvedName =
+      name ||
+      normalizeOmniInputName(
+        normalizedType,
+        normalizedType === "video" ? videoIndex : imageIndex
+      );
+
+    let resolvedUrl = url;
+    if (!resolvedUrl && path) {
+      const uploadedFile = await uploadLocalFile(path, {
+        type: normalizedType,
+        fileType: normalizedType,
+      });
+      resolvedUrl = uploadedFile.upload.url;
+      uploaded[resolvedName] = uploadedFile;
+    }
+
+    if (!resolvedUrl) {
+      throw new Error(`Missing URL for omni input ${resolvedName}`);
+    }
+
+    const input = {
+      name: resolvedName,
+      type: normalizedType,
+      inputType: "URL",
+      url: String(resolvedUrl),
+    };
+    inputs.push(input);
+
+    if (normalizedType === "video") {
+      videoIndex += 1;
+      return;
+    }
+
+    imageIndex += 1;
+  };
+
+  if (body.image_url || body.image_path) {
+    await appendInput({
+      name: body.image_name,
+      type: "image",
+      url: body.image_url,
+      path: body.image_path,
+    });
+  }
+
+  if (body.video_url || body.video_path) {
+    await appendInput({
+      name: body.video_name,
+      type: "video",
+      url: body.video_url,
+      path: body.video_path,
+    });
+  }
+
+  for (const item of Array.isArray(body.inputs) ? body.inputs : []) {
+    await appendInput({
+      name: item?.name,
+      type: item?.type,
+      url: item?.url,
+      path: item?.path,
+    });
+  }
+
+  return {
+    inputs: inputs.map(({ type, ...input }) => input),
+    uploaded: Object.keys(uploaded).length ? uploaded : null,
+    hasVideo: inputs.some((input) => input.type === "video"),
   };
 }
 
@@ -156,6 +295,31 @@ app.get("/v2/browser/account/profile", async (req, res) => {
     res.json({ ok: true, data });
   } catch (error) {
     sendError(res, error);
+  }
+});
+
+app.get("/v2/browser/auth/check", async (req, res) => {
+  try {
+    const data = await browserClient.getProfileAndFeatures();
+    res.json({
+      ok: true,
+      authenticated: true,
+      login_url: KLING_LOGIN_URL,
+      user_id: data?.data?.userProfile?.userId || null,
+      login: data?.data?.login ?? true,
+    });
+  } catch (error) {
+    const normalized = normalizeAuthError(error);
+    if (isAuthExpiredError(normalized)) {
+      return res.json({
+        ok: true,
+        authenticated: false,
+        login_url: KLING_LOGIN_URL,
+        error: normalized.message,
+        code: normalized.code,
+      });
+    }
+    sendError(res, normalized);
   }
 });
 
@@ -382,32 +546,15 @@ app.post("/v2/browser/tasks/submit", async (req, res) => {
       return res.status(400).json({ ok: false, error: "task object is required" });
     }
 
-    const submitted = await browserClient.submitTask(task);
-
-    if (!poll) {
-      return res.json({ ok: true, data: submitted });
-    }
-
-    const taskId = submitted?.task?.id || submitted?.taskId;
-    if (!taskId) {
-      return res.status(502).json({
-        ok: false,
-        error: "Task submitted but task id was missing in response",
-        data: submitted,
-      });
-    }
-
-    const finalState = await browserClient.pollTask(taskId, {
-      intervalMs: Number(poll_interval_ms || 5000),
-      timeoutMs: Number(poll_timeout_ms || 300000),
+    const { submitted, final } = await submitBrowserTaskAndMaybePoll(task, {
+      poll,
+      pollIntervalMs: poll_interval_ms,
+      pollTimeoutMs: poll_timeout_ms,
     });
 
     res.json({
       ok: true,
-      data: {
-        submitted,
-        final: finalState,
-      },
+      data: poll ? { submitted, final } : submitted,
     });
   } catch (error) {
     sendError(res, error);
@@ -439,32 +586,15 @@ app.post("/v2/browser/tasks/text-to-video", async (req, res) => {
       enableAudio: enable_audio,
     });
 
-    const submitted = await browserClient.submitTask(task);
-
-    if (!poll) {
-      return res.json({ ok: true, data: submitted, task });
-    }
-
-    const taskId = submitted?.task?.id || submitted?.taskId;
-    if (!taskId) {
-      return res.status(502).json({
-        ok: false,
-        error: "Task submitted but task id was missing in response",
-        data: submitted,
-      });
-    }
-
-    const finalState = await browserClient.pollTask(taskId, {
-      intervalMs: Number(poll_interval_ms || 5000),
-      timeoutMs: Number(poll_timeout_ms || 300000),
+    const { submitted, final } = await submitBrowserTaskAndMaybePoll(task, {
+      poll,
+      pollIntervalMs: poll_interval_ms,
+      pollTimeoutMs: poll_timeout_ms,
     });
 
     res.json({
       ok: true,
-      data: {
-        submitted,
-        final: finalState,
-      },
+      data: poll ? { submitted, final } : submitted,
       task,
     });
   } catch (error) {
@@ -530,32 +660,15 @@ app.post("/v2/browser/tasks/image-to-video", async (req, res) => {
       tailImageEnabled: tail_image_enabled,
     });
 
-    const submitted = await browserClient.submitTask(task);
-
-    if (!poll) {
-      return res.json({ ok: true, data: submitted, task, uploaded });
-    }
-
-    const taskId = submitted?.task?.id || submitted?.taskId;
-    if (!taskId) {
-      return res.status(502).json({
-        ok: false,
-        error: "Task submitted but task id was missing in response",
-        data: submitted,
-      });
-    }
-
-    const finalState = await browserClient.pollTask(taskId, {
-      intervalMs: Number(poll_interval_ms || 5000),
-      timeoutMs: Number(poll_timeout_ms || 300000),
+    const { submitted, final } = await submitBrowserTaskAndMaybePoll(task, {
+      poll,
+      pollIntervalMs: poll_interval_ms,
+      pollTimeoutMs: poll_timeout_ms,
     });
 
     res.json({
       ok: true,
-      data: {
-        submitted,
-        final: finalState,
-      },
+      data: poll ? { submitted, final } : submitted,
       task,
       uploaded,
     });
@@ -616,33 +729,141 @@ app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
       enableAudio: enable_audio,
     });
 
-    const submitted = await browserClient.submitTask(task);
-
-    if (!poll) {
-      return res.json({ ok: true, data: submitted, task, uploaded });
-    }
-
-    const taskId = submitted?.task?.id || submitted?.taskId;
-    if (!taskId) {
-      return res.status(502).json({
-        ok: false,
-        error: "Task submitted but task id was missing in response",
-        data: submitted,
-      });
-    }
-
-    const finalState = await browserClient.pollTask(taskId, {
-      intervalMs: Number(poll_interval_ms || 5000),
-      timeoutMs: Number(poll_timeout_ms || 300000),
+    const { submitted, final } = await submitBrowserTaskAndMaybePoll(task, {
+      poll,
+      pollIntervalMs: poll_interval_ms,
+      pollTimeoutMs: poll_timeout_ms,
     });
 
     res.json({
       ok: true,
-      data: {
-        submitted,
-        final: finalState,
-      },
+      data: poll ? { submitted, final } : submitted,
       task,
+      uploaded,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/tasks/omni-video", async (req, res) => {
+  try {
+    const {
+      prompt = "",
+      rich_prompt = "",
+      skill = "",
+      kling_version,
+      model_mode,
+      duration,
+      aspect_ratio,
+      image_count,
+      creation_entrance,
+      enable_audio,
+      customize_multi_shots,
+      prefer_multi_shots,
+      setting_keys,
+      callback_payloads,
+      poll = false,
+      poll_interval_ms,
+      poll_timeout_ms,
+    } = req.body || {};
+
+    const { inputs, uploaded, hasVideo } = await resolveOmniVideoInputs(
+      req.body || {}
+    );
+
+    if (hasVideo) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "omni-video route does not support video reference inputs yet; use image/text inputs for now",
+        code: "OMNI_VIDEO_INPUT_UNSUPPORTED",
+        data: {
+          supported_input_types: ["image", "text"],
+        },
+      });
+    }
+
+    const recognitionBody = buildOmniVideoRecognitionBody({
+      inputs,
+      prompt,
+      richPrompt: rich_prompt,
+      skill,
+      klingVersion: kling_version,
+      enableAudio: enable_audio,
+      customizeMultiShots: customize_multi_shots,
+      preferMultiShots: prefer_multi_shots,
+      callbackPayloads: callback_payloads,
+    });
+
+    const recognition = await browserClient.request({
+      url: "/api/omni/intent-recognition",
+      method: "POST",
+      data: recognitionBody,
+    });
+
+    const omniRecognition = recognition?.data?.omniRecognition;
+    if (!omniRecognition) {
+      return res.status(502).json({
+        ok: false,
+        error: "Omni intent recognition did not return omniRecognition",
+        data: recognition,
+      });
+    }
+
+    const task = buildOmniVideoSubmitTask({
+      inputs,
+      omniRecognition,
+      prompt,
+      richPrompt: rich_prompt,
+      skill,
+      klingVersion: kling_version,
+      modelMode: model_mode,
+      duration,
+      aspectRatio: aspect_ratio,
+      imageCount: image_count,
+      creationEntrance: creation_entrance,
+      enableAudio: enable_audio,
+      customizeMultiShots: customize_multi_shots,
+      preferMultiShots: prefer_multi_shots,
+      settingKeys: setting_keys,
+      callbackPayloads: callback_payloads,
+    });
+
+    const price = await browserClient.request({
+      url: "/api/task/price",
+      method: "POST",
+      data: buildOmniVideoPriceBody({
+        inputs,
+        omniRecognition,
+        prompt,
+        richPrompt: rich_prompt,
+        skill,
+        klingVersion: kling_version,
+        modelMode: model_mode,
+        duration,
+        aspectRatio: aspect_ratio,
+        imageCount: image_count,
+        creationEntrance: creation_entrance,
+        enableAudio: enable_audio,
+        customizeMultiShots: customize_multi_shots,
+        preferMultiShots: prefer_multi_shots,
+        settingKeys: setting_keys,
+        callbackPayloads: callback_payloads,
+      }),
+    });
+
+    const { submitted, final } = await submitBrowserTaskAndMaybePoll(task, {
+      poll,
+      pollIntervalMs: poll_interval_ms,
+      pollTimeoutMs: poll_timeout_ms,
+    });
+
+    res.json({
+      ok: true,
+      data: poll ? { recognition, price, submitted, final } : { recognition, price, submitted },
+      task,
+      inputs,
       uploaded,
     });
   } catch (error) {

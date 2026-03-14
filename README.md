@@ -117,6 +117,33 @@ curl http://127.0.0.1:8010/v1/account/profile
 curl http://127.0.0.1:8010/v2/browser/account/profile
 ```
 
+### Check whether browser auth is still valid
+
+```bash
+curl http://127.0.0.1:8010/v2/browser/auth/check
+```
+
+If Kling login is still valid:
+
+```json
+{
+  "ok": true,
+  "authenticated": true,
+  "login_url": "https://app.klingai.com/cn/"
+}
+```
+
+If Kling login has expired:
+
+```json
+{
+  "ok": true,
+  "authenticated": false,
+  "code": "AUTH_EXPIRED",
+  "login_url": "https://app.klingai.com/cn/"
+}
+```
+
 ### Issue upload token
 
 ```bash
@@ -436,6 +463,8 @@ Current Omni status:
 - current message: `意图识别参数缺失`
 - low-level Omni helper endpoints are now exposed, but the final high-level Omni video builder is not finished yet
 - a capture endpoint now exists to record the actual Omni upload -> recognize -> template -> price flow
+- `/v2/browser/tasks/omni-video` now supports prompt-only and image-reference inputs
+- video-reference inputs are not enabled in that high-level route yet; `video_url` / `video_path` currently return a clear unsupported error instead of a broken submit flow
 
 ## Agent-Browser Findings
 

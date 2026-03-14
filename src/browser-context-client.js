@@ -1,6 +1,13 @@
 import path from "node:path";
 
 import { chromium } from "playwright-core";
+import {
+  buildAuthExpiredError,
+  isAuthExpiredError,
+  isAuthExpiredResponseData,
+  normalizeAuthError,
+} from "./auth-errors.js";
+import { loadKlingCookieFromChrome } from "./chrome-cookie.js";
 
 function parseCookieHeader(cookieHeader) {
   return String(cookieHeader || "")
@@ -20,12 +27,25 @@ function parseCookieHeader(cookieHeader) {
     .filter(Boolean);
 }
 
+function buildBrowserCookies(cookieHeader) {
+  return parseCookieHeader(cookieHeader).map((cookie) => ({
+    ...cookie,
+    domain: ".klingai.com",
+    path: "/",
+    httpOnly: false,
+    secure: true,
+    sameSite: "None",
+  }));
+}
+
 function serializeBrowserError(error) {
+  const normalized = normalizeAuthError(error) || error;
   return {
-    status: error?.status || 500,
-    message: error?.message || String(error),
-    data: error?.data || null,
-    stack: error?.stack || null,
+    status: normalized?.status || 500,
+    code: normalized?.code || null,
+    message: normalized?.message || String(normalized),
+    data: normalized?.data || null,
+    stack: normalized?.stack || null,
   };
 }
 
@@ -40,6 +60,17 @@ function isRecoverablePageError(error) {
 
 async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function resolveAcceptLanguage(defaultValue, localeCode) {
+  const localeMap = {
+    308: "zh-CN,zh;q=0.9",
+    1033: "en-US,en;q=0.9",
+    1041: "ja-JP,ja;q=0.9",
+    1042: "ko-KR,ko;q=0.9",
+  };
+
+  return localeMap[Number(localeCode)] || defaultValue;
 }
 
 export class KlingBrowserContextClient {
@@ -68,6 +99,7 @@ export class KlingBrowserContextClient {
     this.context = null;
     this.page = null;
     this.moduleUrl = moduleUrl || null;
+    this.guardModuleUrl = null;
     this.initPromise = null;
     this.operationChain = Promise.resolve();
   }
@@ -106,15 +138,9 @@ export class KlingBrowserContextClient {
 
       this.page = await this.context.newPage();
 
-      if (this.cookie) {
-        const cookies = parseCookieHeader(this.cookie).map((cookie) => ({
-          ...cookie,
-          domain: ".klingai.com",
-          path: "/",
-          httpOnly: false,
-          secure: true,
-          sameSite: "None",
-        }));
+      {
+        const freshCookieHeader = loadKlingCookieFromChrome() || this.cookie;
+        const cookies = buildBrowserCookies(freshCookieHeader);
         if (cookies.length) {
           await this.context.addCookies(cookies);
         }
@@ -131,18 +157,20 @@ export class KlingBrowserContextClient {
 
       await this.page.waitForTimeout(3000);
 
-      if (!this.moduleUrl) {
-        this.moduleUrl = await this.page.evaluate(async () => {
+      this.guardModuleUrl = await this.page.evaluate(async () => {
         const candidates = [
           ...document.querySelectorAll(
-            'link[rel="modulepreload"][href*="/assets/js/index-"]'
+            'link[rel="modulepreload"][href*="/assets/js/vendor--"]'
           ),
         ].map((node) => node.href);
 
         for (const candidate of candidates) {
           try {
             const mod = await import(candidate);
-            if (typeof mod.r === "function" && Object.keys(mod).length > 100) {
+            if (
+              typeof mod?.am?.call === "function" &&
+              typeof mod?.an === "function"
+            ) {
               return candidate;
             }
           } catch {
@@ -151,33 +179,75 @@ export class KlingBrowserContextClient {
         }
 
         return null;
-        });
-      }
+      });
 
-      if (!this.moduleUrl) {
+      if (!this.guardModuleUrl) {
         throw new Error(
-          "Failed to discover Kling request module exporting mod.r"
+          "Failed to discover Kling guard module exporting $encode"
         );
       }
 
       let lastError = null;
       for (let attempt = 0; attempt < 10; attempt += 1) {
         const probe = await this.page.evaluate(
-          async ({ moduleUrl }) => {
+          async ({ guardModuleUrl, apiBaseUrl, acceptLanguage, requestTimeoutMs }) => {
             try {
-              const mod = await import(moduleUrl);
-              const result = await mod.r(
-                {
-                  url: "/api/user/profile_and_features",
+              const mod = await import(guardModuleUrl);
+              const guard = mod.am;
+              const caver = guard.call("$getCatVersion", []);
+              const { signResult } = await new Promise((resolve, reject) => {
+                guard.call("$encode", [
+                  {
+                    url: "/api/user/profile_and_features",
+                    query: { caver },
+                    form: null,
+                    requestBody: null,
+                    projectInfo: {
+                      appKey: "8M3oUipD76",
+                      radarId: "91e99da176",
+                      debug: false,
+                    },
+                  },
+                  {
+                    suc(signResult, signInput) {
+                      resolve({ signResult, signInput });
+                    },
+                    err(error) {
+                      reject(error);
+                    },
+                  },
+                ]);
+              });
+
+              const url = `${apiBaseUrl}/api/user/profile_and_features?__NS_hxfalcon=${encodeURIComponent(
+                signResult
+              )}&caver=${encodeURIComponent(caver)}`;
+              const response = await Promise.race([
+                fetch(url, {
                   method: "GET",
-                  params: {},
-                },
-                { ifIgnore401Interceptor: true },
-                308
-              );
+                  credentials: "include",
+                  headers: {
+                    "Accept-Language": acceptLanguage,
+                    "Time-Zone":
+                      Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+                  },
+                }),
+                new Promise((_, reject) =>
+                  setTimeout(
+                    () =>
+                      reject({
+                        name: "TimeoutError",
+                        message: `Browser request timed out after ${requestTimeoutMs}ms`,
+                        status: 408,
+                      }),
+                    requestTimeoutMs
+                  )
+                ),
+              ]);
+              const data = await response.json();
               return {
                 ok: true,
-                data: result?.data ?? result,
+                data,
               };
             } catch (error) {
               return {
@@ -190,10 +260,18 @@ export class KlingBrowserContextClient {
               };
             }
           },
-          { moduleUrl: this.moduleUrl }
+          {
+            guardModuleUrl: this.guardModuleUrl,
+            apiBaseUrl: this.apiBaseUrl,
+            acceptLanguage: this.acceptLanguage,
+            requestTimeoutMs: this.requestTimeoutMs,
+          }
         );
 
         if (probe?.ok) {
+          if (isAuthExpiredResponseData(probe.data)) {
+            throw buildAuthExpiredError(probe.data);
+          }
           return;
         }
 
@@ -219,25 +297,147 @@ export class KlingBrowserContextClient {
     requestConfig,
     requestCustomConfig = {},
     localeCode = 308,
-    requestTimeoutMs = this.requestTimeoutMs
+    requestTimeoutMs = this.requestTimeoutMs,
+    includeOrigin = false
   ) {
     return this.runExclusive(async () => {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         await this.ensureReady();
+        const requestAcceptLanguage = resolveAcceptLanguage(
+          this.acceptLanguage,
+          localeCode
+        );
 
         try {
           const response = await this.page.evaluate(
         async ({
-          moduleUrl,
+          guardModuleUrl,
+          apiBaseUrl,
+          requestAcceptLanguage,
           requestConfig,
           requestCustomConfig,
-          localeCode,
           requestTimeoutMs,
+          includeOrigin,
         }) => {
           try {
-            const mod = await import(moduleUrl);
-            const result = await Promise.race([
-              mod.r(requestConfig, requestCustomConfig, localeCode),
+            const mod = await import(guardModuleUrl);
+            const guard = mod.am;
+            const caver = guard.call("$getCatVersion", []);
+            const method = String(requestConfig?.method || "GET").toUpperCase();
+            const rawUrl = String(requestConfig?.url || "");
+            if (!rawUrl) {
+              throw {
+                name: "RequestConfigError",
+                message: "requestConfig.url is required",
+                status: 400,
+              };
+            }
+
+            const parsedUrl = rawUrl.startsWith("http")
+              ? new URL(rawUrl)
+              : new URL(rawUrl, apiBaseUrl);
+            const basePath = parsedUrl.pathname;
+            const params = Object.fromEntries(parsedUrl.searchParams.entries());
+            if (
+              requestConfig?.params &&
+              typeof requestConfig.params === "object" &&
+              !Array.isArray(requestConfig.params)
+            ) {
+              Object.assign(params, requestConfig.params);
+            }
+
+            for (const [key, value] of Object.entries(params)) {
+              if (value == null) {
+                delete params[key];
+              }
+            }
+
+            const requestHeaders = {
+              ...(requestConfig?.headers || {}),
+              ...(requestCustomConfig?.headers || {}),
+            };
+            const contentType =
+              requestHeaders["Content-Type"] ||
+              requestHeaders["content-type"] ||
+              (method === "GET" ? "" : "application/json");
+
+            let form = null;
+            let requestBody = null;
+            let body = undefined;
+            if (method !== "GET" && method !== "HEAD") {
+              if (contentType.includes("application/x-www-form-urlencoded")) {
+                if (typeof requestConfig?.data === "string") {
+                  form = requestConfig.data;
+                } else {
+                  form = new URLSearchParams(requestConfig?.data || {}).toString();
+                }
+                body = form;
+              } else {
+                requestBody =
+                  requestConfig?.data === undefined ? null : requestConfig.data;
+                body =
+                  typeof requestConfig?.data === "string"
+                    ? requestConfig.data
+                    : JSON.stringify(requestConfig?.data ?? {});
+              }
+            }
+
+            const { signResult } = await new Promise((resolve, reject) => {
+              guard.call("$encode", [
+                {
+                  url: basePath,
+                  query: { caver, ...params },
+                  form,
+                  requestBody,
+                  projectInfo: {
+                    appKey: "8M3oUipD76",
+                    radarId: "91e99da176",
+                    debug: false,
+                  },
+                },
+                {
+                  suc(result, signInput) {
+                    resolve({ signResult: result, signInput });
+                  },
+                  err(error) {
+                    reject(error);
+                  },
+                },
+              ]);
+            });
+
+            const signedParams = new URLSearchParams({
+              ...params,
+              __NS_hxfalcon: signResult,
+              caver,
+            });
+            const targetOrigin = parsedUrl.origin || apiBaseUrl;
+            const signedUrl = `${targetOrigin}${basePath}?${signedParams.toString()}`;
+            const headers = {
+              ...requestHeaders,
+              "Accept-Language": requestAcceptLanguage,
+              "Time-Zone":
+                Intl.DateTimeFormat().resolvedOptions().timeZone || "",
+            };
+            if (method === "GET" || method === "HEAD") {
+              delete headers["Content-Type"];
+              delete headers["content-type"];
+            } else if (!headers["Content-Type"] && !headers["content-type"]) {
+              headers["Content-Type"] = contentType;
+            }
+
+            const raw = await Promise.race([
+              fetch(signedUrl, {
+                method,
+                credentials:
+                  requestCustomConfig?.credentials ||
+                  (requestCustomConfig?.withCredentials === false
+                    ? "same-origin"
+                    : "include"),
+                headers,
+                body,
+                referrer: requestCustomConfig?.referrer,
+              }),
               new Promise((_, reject) =>
                 setTimeout(
                   () =>
@@ -250,9 +450,40 @@ export class KlingBrowserContextClient {
                 )
               ),
             ]);
+            const responseText = await raw.text();
+            let data = responseText;
+            try {
+              data = JSON.parse(responseText);
+            } catch {
+              // Preserve plain-text responses.
+            }
+
+            let origin = null;
+            if (includeOrigin) {
+              origin = {
+                status: raw.status,
+                statusText: raw.statusText,
+                data,
+              };
+            }
+
+            if (!raw.ok) {
+              throw {
+                name: "HttpError",
+                message:
+                  data?.error?.detail ||
+                  data?.message ||
+                  raw.statusText ||
+                  `HTTP ${raw.status}`,
+                status: raw.status,
+                data,
+              };
+            }
+
             return {
               ok: true,
-              data: result?.data ?? result,
+              data,
+              origin,
             };
           } catch (error) {
             return {
@@ -271,23 +502,31 @@ export class KlingBrowserContextClient {
           }
         },
         {
-          moduleUrl: this.moduleUrl,
+          guardModuleUrl: this.guardModuleUrl,
+          apiBaseUrl: this.apiBaseUrl,
+          requestAcceptLanguage,
           requestConfig,
           requestCustomConfig,
-          localeCode,
           requestTimeoutMs,
+          includeOrigin,
         }
       );
           if (!response?.ok) {
-            throw {
+            throw normalizeAuthError({
               status: response?.error?.status || 500,
               message: response?.error?.message || "Browser request failed",
               data: response?.error || null,
-            };
+            });
           }
-          return response.data;
+          if (isAuthExpiredResponseData(response.data)) {
+            throw buildAuthExpiredError(response.data);
+          }
+          return includeOrigin ? response : response.data;
         } catch (error) {
-          if (attempt === 0 && isRecoverablePageError(error)) {
+          if (
+            attempt === 0 &&
+            (isRecoverablePageError(error) || isAuthExpiredError(error))
+          ) {
             await this.close();
             continue;
           }
@@ -386,15 +625,9 @@ export class KlingBrowserContextClient {
           },
         });
 
-        if (this.cookie) {
-          const cookies = parseCookieHeader(this.cookie).map((cookie) => ({
-            ...cookie,
-            domain: ".klingai.com",
-            path: "/",
-            httpOnly: false,
-            secure: true,
-            sameSite: "None",
-          }));
+        {
+          const freshCookieHeader = loadKlingCookieFromChrome() || this.cookie;
+          const cookies = buildBrowserCookies(freshCookieHeader);
           if (cookies.length) {
             await this.context.addCookies(cookies);
           }
@@ -455,6 +688,8 @@ export class KlingBrowserContextClient {
           timeout: 60000,
         }).catch(() => {});
 
+        await capturePage.waitForTimeout(15000);
+
         await capturePage
           .waitForFunction(
             () => document.querySelectorAll('input[type="file"]').length >= 2,
@@ -464,7 +699,15 @@ export class KlingBrowserContextClient {
 
         const fileInputs = await capturePage.$$('input[type="file"]');
         if (!fileInputs.length) {
-          throw new Error("Omni page did not expose file inputs");
+          const debugState = await capturePage.evaluate(() => ({
+            url: location.href,
+            title: document.title,
+            bodyText: document.body.innerText.slice(0, 1200),
+            inputCount: document.querySelectorAll('input[type="file"]').length,
+          }));
+          throw new Error(
+            `Omni page did not expose file inputs: ${JSON.stringify(debugState)}`
+          );
         }
 
         await fileInputs[0].setInputFiles(imagePath);
@@ -551,6 +794,7 @@ export class KlingBrowserContextClient {
     this.context = null;
     this.page = null;
     this.moduleUrl = null;
+    this.guardModuleUrl = null;
     this.initPromise = null;
     this.operationChain = Promise.resolve();
   }

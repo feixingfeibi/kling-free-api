@@ -1,4 +1,9 @@
 import axios from "axios";
+import {
+  buildAuthExpiredError,
+  isAuthExpiredResponseData,
+  normalizeAuthError,
+} from "./auth-errors.js";
 
 function createError(error) {
   if (error.response) {
@@ -45,9 +50,12 @@ export class KlingWebClient {
   async request(config) {
     try {
       const response = await this.http.request(config);
+      if (isAuthExpiredResponseData(response.data)) {
+        throw buildAuthExpiredError(response.data);
+      }
       return response.data;
     } catch (error) {
-      throw createError(error);
+      throw normalizeAuthError(createError(error));
     }
   }
 
