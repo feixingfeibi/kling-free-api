@@ -37,6 +37,12 @@ So this repository should currently be treated as:
 - a now-implemented browser-context forwarding server for signed requests
 - not yet a finished "works for every task body" replay server
 
+One concrete payload discovery is now confirmed:
+
+- the current web text-to-video flow prices against `type: "m2v_aio2video"`
+- not the older `m2v_txt2video` shape
+- the built-in `/v2/browser/tasks/text-to-video` builder has been verified end-to-end
+
 ## Why this route
 
 The existing enterprise Kling API skill in this workspace targets `api-beijing.klingai.com`.
@@ -183,6 +189,28 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/submit \
   }'
 ```
 
+### Submit text-to-video with the built-in minimal builder
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "cinematic city street at night, reflective rain, slow dolly in",
+    "duration": "5",
+    "aspect_ratio": "16:9",
+    "kling_version": "3.0",
+    "model_mode": "std",
+    "enable_audio": "true"
+  }'
+```
+
+Observed verified result in this workspace:
+
+- request returned `200`
+- task was created successfully
+- example task id: `305455133152156`
+- initial task status: `5` (queued/running pipeline)
+
 ## Current limitations
 
 - Upload-to-storage is not proxied yet. This version only wraps Kling's token issue and post-upload verification APIs.
@@ -222,6 +250,43 @@ Current result:
 
 - the input string is reproducible in-page
 - the final `__NS_hxfalcon` generation step can be bypassed by browser-context forwarding
+- a real page-init `POST /api/task/price` payload has been captured
+- the current text-to-video body shape is:
+
+```json
+{
+  "type": "m2v_aio2video",
+  "arguments": [
+    {"name":"negative_prompt","value":""},
+    {"name":"duration","value":"5"},
+    {"name":"imageCount","value":"1"},
+    {"name":"kling_version","value":"3.0"},
+    {"name":"prompt","value":"..."},
+    {"name":"rich_prompt","value":""},
+    {"name":"cfg","value":"0.5"},
+    {"name":"aspect_ratio","value":"16:9"},
+    {"name":"camera_json","value":"{\"type\":\"empty\",\"horizontal\":0,\"vertical\":0,\"zoom\":0,\"tilt\":0,\"pan\":0,\"roll\":0}"},
+    {"name":"camera_control_enabled","value":"false"},
+    {"name":"prefer_multi_shots","value":"true"},
+    {"name":"biz","value":"klingai"},
+    {"name":"enable_audio","value":"true"},
+    {"name":"model_mode","value":"std"}
+  ],
+  "inputs": []
+}
+```
+
+The successful submit response also shows that Kling injects some extra internal arguments on submit, including:
+
+- `__deviceType`
+- `__did`
+- `__effect`
+- `__locale`
+- `__platform`
+- `__priority`
+- `__userType`
+
+That is another reason browser-context forwarding is the preferred route right now: the frontend runtime can enrich the minimal payload automatically.
 
 ## Preferred path now
 

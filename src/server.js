@@ -6,6 +6,7 @@ import morgan from "morgan";
 import { config, getCookieFromRequest } from "./config.js";
 import { KlingBrowserContextClient } from "./browser-context-client.js";
 import { KlingWebClient } from "./kling-web-client.js";
+import { buildTextToVideoTask } from "./task-builders.js";
 
 const app = express();
 
@@ -23,6 +24,7 @@ const browserClient = new KlingBrowserContextClient({
   userDataDir: config.browserUserDataDir,
   headless: config.browserHeadless,
   moduleUrl: config.browserModuleUrl,
+  requestTimeoutMs: config.browserRequestTimeoutMs,
 });
 
 function getClient(req) {
@@ -58,6 +60,7 @@ app.get("/health", (req, res) => {
     site_base_url: config.siteBaseUrl,
     cookie_configured: Boolean(getCookieFromRequest(req)),
     browser_headless: config.browserHeadless,
+    browser_request_timeout_ms: config.browserRequestTimeoutMs,
   });
 });
 
@@ -90,6 +93,7 @@ app.post("/v2/browser/request", async (req, res) => {
       requestConfig,
       requestCustomConfig = {},
       localeCode = 308,
+      requestTimeoutMs,
     } = req.body || {};
 
     if (!requestConfig || typeof requestConfig !== "object") {
@@ -101,7 +105,8 @@ app.post("/v2/browser/request", async (req, res) => {
     const data = await browserClient.request(
       requestConfig,
       requestCustomConfig,
-      localeCode
+      localeCode,
+      Number(requestTimeoutMs || config.browserRequestTimeoutMs)
     );
     res.json({ ok: true, data });
   } catch (error) {
@@ -142,6 +147,64 @@ app.post("/v2/browser/tasks/submit", async (req, res) => {
         submitted,
         final: finalState,
       },
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/tasks/text-to-video", async (req, res) => {
+  try {
+    const {
+      prompt,
+      negative_prompt,
+      duration,
+      aspect_ratio,
+      kling_version,
+      model_mode,
+      enable_audio,
+      poll = false,
+      poll_interval_ms,
+      poll_timeout_ms,
+    } = req.body || {};
+
+    const task = buildTextToVideoTask({
+      prompt,
+      negativePrompt: negative_prompt,
+      duration,
+      aspectRatio: aspect_ratio,
+      klingVersion: kling_version,
+      modelMode: model_mode,
+      enableAudio: enable_audio,
+    });
+
+    const submitted = await browserClient.submitTask(task);
+
+    if (!poll) {
+      return res.json({ ok: true, data: submitted, task });
+    }
+
+    const taskId = submitted?.task?.id || submitted?.taskId;
+    if (!taskId) {
+      return res.status(502).json({
+        ok: false,
+        error: "Task submitted but task id was missing in response",
+        data: submitted,
+      });
+    }
+
+    const finalState = await browserClient.pollTask(taskId, {
+      intervalMs: Number(poll_interval_ms || 5000),
+      timeoutMs: Number(poll_timeout_ms || 300000),
+    });
+
+    res.json({
+      ok: true,
+      data: {
+        submitted,
+        final: finalState,
+      },
+      task,
     });
   } catch (error) {
     sendError(res, error);

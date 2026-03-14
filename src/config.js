@@ -15,6 +15,9 @@ export const config = {
     process.env.KLING_BROWSER_USER_DATA_DIR || ".browser-profile",
   browserHeadless: process.env.KLING_BROWSER_HEADLESS !== "false",
   browserModuleUrl: process.env.KLING_BROWSER_MODULE_URL || "",
+  browserRequestTimeoutMs: Number(
+    process.env.KLING_BROWSER_REQUEST_TIMEOUT_MS || 120000
+  ),
 };
 
 export function getCookieFromRequest(req) {

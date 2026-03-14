@@ -44,6 +44,7 @@ export class KlingBrowserContextClient {
     userDataDir,
     headless,
     moduleUrl,
+    requestTimeoutMs,
   }) {
     this.apiBaseUrl = apiBaseUrl.replace(/\/+$/, "");
     this.siteBaseUrl = siteBaseUrl.replace(/\/+$/, "");
@@ -53,6 +54,7 @@ export class KlingBrowserContextClient {
     this.executablePath = executablePath;
     this.userDataDir = path.resolve(userDataDir);
     this.headless = headless;
+    this.requestTimeoutMs = requestTimeoutMs;
     this.browser = null;
     this.context = null;
     this.page = null;
@@ -197,19 +199,39 @@ export class KlingBrowserContextClient {
     }
   }
 
-  async request(requestConfig, requestCustomConfig = {}, localeCode = 308) {
+  async request(
+    requestConfig,
+    requestCustomConfig = {},
+    localeCode = 308,
+    requestTimeoutMs = this.requestTimeoutMs
+  ) {
     await this.ensureReady();
 
     try {
       const response = await this.page.evaluate(
-        async ({ moduleUrl, requestConfig, requestCustomConfig, localeCode }) => {
+        async ({
+          moduleUrl,
+          requestConfig,
+          requestCustomConfig,
+          localeCode,
+          requestTimeoutMs,
+        }) => {
           try {
             const mod = await import(moduleUrl);
-            const result = await mod.r(
-              requestConfig,
-              requestCustomConfig,
-              localeCode
-            );
+            const result = await Promise.race([
+              mod.r(requestConfig, requestCustomConfig, localeCode),
+              new Promise((_, reject) =>
+                setTimeout(
+                  () =>
+                    reject({
+                      name: "TimeoutError",
+                      message: `Browser request timed out after ${requestTimeoutMs}ms`,
+                      status: 408,
+                    }),
+                  requestTimeoutMs
+                )
+              ),
+            ]);
             return {
               ok: true,
               data: result?.data ?? result,
@@ -235,6 +257,7 @@ export class KlingBrowserContextClient {
           requestConfig,
           requestCustomConfig,
           localeCode,
+          requestTimeoutMs,
         }
       );
       if (!response?.ok) {
@@ -257,7 +280,8 @@ export class KlingBrowserContextClient {
         method: "GET",
         params: {},
       },
-      { ifIgnore401Interceptor: true }
+      { ifIgnore401Interceptor: true },
+      308
     );
   }
 
