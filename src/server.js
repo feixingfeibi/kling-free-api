@@ -7,7 +7,11 @@ import { config, getCookieFromRequest } from "./config.js";
 import { maskCookie } from "./chrome-cookie.js";
 import { KlingBrowserContextClient } from "./browser-context-client.js";
 import { KlingWebClient } from "./kling-web-client.js";
-import { buildImageToVideoTask, buildTextToVideoTask } from "./task-builders.js";
+import {
+  buildFirstLastFrameVideoTask,
+  buildImageToVideoTask,
+  buildTextToVideoTask,
+} from "./task-builders.js";
 
 const app = express();
 
@@ -241,6 +245,68 @@ app.post("/v2/browser/tasks/image-to-video", async (req, res) => {
       modelMode: model_mode,
       enableAudio: enable_audio,
       tailImageEnabled: tail_image_enabled,
+    });
+
+    const submitted = await browserClient.submitTask(task);
+
+    if (!poll) {
+      return res.json({ ok: true, data: submitted, task });
+    }
+
+    const taskId = submitted?.task?.id || submitted?.taskId;
+    if (!taskId) {
+      return res.status(502).json({
+        ok: false,
+        error: "Task submitted but task id was missing in response",
+        data: submitted,
+      });
+    }
+
+    const finalState = await browserClient.pollTask(taskId, {
+      intervalMs: Number(poll_interval_ms || 5000),
+      timeoutMs: Number(poll_timeout_ms || 300000),
+    });
+
+    res.json({
+      ok: true,
+      data: {
+        submitted,
+        final: finalState,
+      },
+      task,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
+  try {
+    const {
+      image_url,
+      tail_image_url,
+      prompt,
+      negative_prompt,
+      duration,
+      aspect_ratio,
+      kling_version,
+      model_mode,
+      enable_audio,
+      poll = false,
+      poll_interval_ms,
+      poll_timeout_ms,
+    } = req.body || {};
+
+    const task = buildFirstLastFrameVideoTask({
+      imageUrl: image_url,
+      tailImageUrl: tail_image_url,
+      prompt,
+      negativePrompt: negative_prompt,
+      duration,
+      aspectRatio: aspect_ratio,
+      klingVersion: kling_version,
+      modelMode: model_mode,
+      enableAudio: enable_audio,
     });
 
     const submitted = await browserClient.submitTask(task);
