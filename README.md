@@ -87,6 +87,14 @@ Recommended for the current Kling build:
 export KLING_BROWSER_MODULE_URL="https://p1-kling.klingai.com/kcdn/cdn-kcdn112452/kling-web/assets/js/index-BrvXf0G_.js"
 ```
 
+If `KLING_COOKIE` is not set, the server now tries to read Kling cookies from local Chrome automatically via `browser_cookie3`.
+
+Fast local start:
+
+```bash
+./scripts/run_local.sh
+```
+
 ## Endpoints
 
 ### Health

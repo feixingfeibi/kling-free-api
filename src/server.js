@@ -4,6 +4,7 @@ import cors from "cors";
 import morgan from "morgan";
 
 import { config, getCookieFromRequest } from "./config.js";
+import { maskCookie } from "./chrome-cookie.js";
 import { KlingBrowserContextClient } from "./browser-context-client.js";
 import { KlingWebClient } from "./kling-web-client.js";
 import { buildTextToVideoTask } from "./task-builders.js";
@@ -336,8 +337,19 @@ app.get("/v1/tasks/:taskId/poll", async (req, res) => {
 });
 
 app.listen(config.port, () => {
+  console.log(`kling-free-api listening on http://127.0.0.1:${config.port}`);
   console.log(
-    `kling-free-api listening on http://127.0.0.1:${config.port}`
+    JSON.stringify(
+      {
+        api_base_url: config.apiBaseUrl,
+        site_base_url: config.siteBaseUrl,
+        browser_module_url: config.browserModuleUrl || null,
+        cookie_loaded: Boolean(config.cookie),
+        cookie_preview: maskCookie(config.cookie),
+      },
+      null,
+      2
+    )
   );
 });
 
