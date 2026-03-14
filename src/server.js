@@ -6,6 +6,7 @@ import morgan from "morgan";
 import { config, getCookieFromRequest } from "./config.js";
 import { maskCookie } from "./chrome-cookie.js";
 import { KlingBrowserContextClient } from "./browser-context-client.js";
+import { readLocalFileAsBase64 } from "./file-utils.js";
 import { KlingWebClient } from "./kling-web-client.js";
 import {
   buildFirstLastFrameVideoTask,
@@ -55,6 +56,25 @@ function sendError(res, error) {
     error: error.message || "Unknown error",
     data: error.data || null,
   });
+}
+
+async function uploadLocalImage(filePath) {
+  const file = readLocalFileAsBase64(filePath);
+  const upload = await browserClient.uploadFile({
+    fileName: file.fileName,
+    base64: file.base64,
+    mimeType: file.mimeType,
+    type: "image",
+    verify: true,
+    fileType: "image",
+  });
+
+  return {
+    file_path: file.filePath,
+    file_name: file.fileName,
+    mime_type: file.mimeType,
+    upload,
+  };
 }
 
 app.get("/health", (req, res) => {
@@ -114,6 +134,60 @@ app.post("/v2/browser/request", async (req, res) => {
       Number(requestTimeoutMs || config.browserRequestTimeoutMs)
     );
     res.json({ ok: true, data });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/upload/image", async (req, res) => {
+  try {
+    const { file_path, verify = true } = req.body || {};
+    if (!file_path) {
+      return res.status(400).json({ ok: false, error: "file_path is required" });
+    }
+
+    const uploaded = await uploadLocalImage(file_path);
+
+    res.json({
+      ok: true,
+      file: {
+        file_path: uploaded.file_path,
+        file_name: uploaded.file_name,
+        mime_type: uploaded.mime_type,
+      },
+      data: uploaded.upload,
+    });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+app.post("/v2/browser/upload/file", async (req, res) => {
+  try {
+    const { file_path, type = "image", verify = true, file_type = "" } = req.body || {};
+    if (!file_path) {
+      return res.status(400).json({ ok: false, error: "file_path is required" });
+    }
+
+    const file = readLocalFileAsBase64(file_path);
+    const data = await browserClient.uploadFile({
+      fileName: file.fileName,
+      base64: file.base64,
+      mimeType: file.mimeType,
+      type,
+      verify,
+      fileType: file_type || type,
+    });
+
+    res.json({
+      ok: true,
+      file: {
+        file_path: file.filePath,
+        file_name: file.fileName,
+        mime_type: file.mimeType,
+      },
+      data,
+    });
   } catch (error) {
     sendError(res, error);
   }
@@ -220,7 +294,9 @@ app.post("/v2/browser/tasks/image-to-video", async (req, res) => {
   try {
     const {
       image_url,
+      image_path,
       tail_image_url,
+      tail_image_path,
       prompt,
       negative_prompt,
       duration,
@@ -234,9 +310,34 @@ app.post("/v2/browser/tasks/image-to-video", async (req, res) => {
       poll_timeout_ms,
     } = req.body || {};
 
+    let resolvedImageUrl = image_url;
+    let resolvedTailImageUrl = tail_image_url;
+    let uploaded = null;
+
+    if (!resolvedImageUrl && image_path) {
+      const uploadedImage = await uploadLocalImage(image_path);
+      resolvedImageUrl = uploadedImage.upload.url;
+      uploaded = {
+        image: {
+          ...uploadedImage,
+        },
+      };
+    }
+
+    if (!resolvedTailImageUrl && tail_image_path) {
+      const uploadedTailImage = await uploadLocalImage(tail_image_path);
+      resolvedTailImageUrl = uploadedTailImage.upload.url;
+      uploaded = {
+        ...(uploaded || {}),
+        tail_image: {
+          ...uploadedTailImage,
+        },
+      };
+    }
+
     const task = buildImageToVideoTask({
-      imageUrl: image_url,
-      tailImageUrl: tail_image_url,
+      imageUrl: resolvedImageUrl,
+      tailImageUrl: resolvedTailImageUrl,
       prompt,
       negativePrompt: negative_prompt,
       duration,
@@ -250,7 +351,7 @@ app.post("/v2/browser/tasks/image-to-video", async (req, res) => {
     const submitted = await browserClient.submitTask(task);
 
     if (!poll) {
-      return res.json({ ok: true, data: submitted, task });
+      return res.json({ ok: true, data: submitted, task, uploaded });
     }
 
     const taskId = submitted?.task?.id || submitted?.taskId;
@@ -274,6 +375,7 @@ app.post("/v2/browser/tasks/image-to-video", async (req, res) => {
         final: finalState,
       },
       task,
+      uploaded,
     });
   } catch (error) {
     sendError(res, error);
@@ -284,7 +386,9 @@ app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
   try {
     const {
       image_url,
+      image_path,
       tail_image_url,
+      tail_image_path,
       prompt,
       negative_prompt,
       duration,
@@ -297,9 +401,30 @@ app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
       poll_timeout_ms,
     } = req.body || {};
 
+    let resolvedImageUrl = image_url;
+    let resolvedTailImageUrl = tail_image_url;
+    let uploaded = null;
+
+    if (!resolvedImageUrl && image_path) {
+      const uploadedImage = await uploadLocalImage(image_path);
+      resolvedImageUrl = uploadedImage.upload.url;
+      uploaded = {
+        image: uploadedImage,
+      };
+    }
+
+    if (!resolvedTailImageUrl && tail_image_path) {
+      const uploadedTailImage = await uploadLocalImage(tail_image_path);
+      resolvedTailImageUrl = uploadedTailImage.upload.url;
+      uploaded = {
+        ...(uploaded || {}),
+        tail_image: uploadedTailImage,
+      };
+    }
+
     const task = buildFirstLastFrameVideoTask({
-      imageUrl: image_url,
-      tailImageUrl: tail_image_url,
+      imageUrl: resolvedImageUrl,
+      tailImageUrl: resolvedTailImageUrl,
       prompt,
       negativePrompt: negative_prompt,
       duration,
@@ -312,7 +437,7 @@ app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
     const submitted = await browserClient.submitTask(task);
 
     if (!poll) {
-      return res.json({ ok: true, data: submitted, task });
+      return res.json({ ok: true, data: submitted, task, uploaded });
     }
 
     const taskId = submitted?.task?.id || submitted?.taskId;
@@ -336,6 +461,7 @@ app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
         final: finalState,
       },
       task,
+      uploaded,
     });
   } catch (error) {
     sendError(res, error);

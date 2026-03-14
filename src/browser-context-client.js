@@ -60,6 +60,13 @@ export class KlingBrowserContextClient {
     this.page = null;
     this.moduleUrl = moduleUrl || null;
     this.initPromise = null;
+    this.operationChain = Promise.resolve();
+  }
+
+  async runExclusive(task) {
+    const run = this.operationChain.then(task, task);
+    this.operationChain = run.catch(() => {});
+    return run;
   }
 
   async ensureReady() {
@@ -205,10 +212,11 @@ export class KlingBrowserContextClient {
     localeCode = 308,
     requestTimeoutMs = this.requestTimeoutMs
   ) {
-    await this.ensureReady();
+    return this.runExclusive(async () => {
+      await this.ensureReady();
 
-    try {
-      const response = await this.page.evaluate(
+      try {
+        const response = await this.page.evaluate(
         async ({
           moduleUrl,
           requestConfig,
@@ -260,17 +268,79 @@ export class KlingBrowserContextClient {
           requestTimeoutMs,
         }
       );
-      if (!response?.ok) {
-        throw {
-          status: response?.error?.status || 500,
-          message: response?.error?.message || "Browser request failed",
-          data: response?.error || null,
-        };
+        if (!response?.ok) {
+          throw {
+            status: response?.error?.status || 500,
+            message: response?.error?.message || "Browser request failed",
+            data: response?.error || null,
+          };
+        }
+        return response.data;
+      } catch (error) {
+        throw serializeBrowserError(error);
       }
-      return response.data;
-    } catch (error) {
-      throw serializeBrowserError(error);
-    }
+    });
+  }
+
+  async uploadFile({
+    fileName,
+    base64,
+    mimeType = "application/octet-stream",
+    type = "image",
+    verify = true,
+    fileType = "",
+  }) {
+    return this.runExclusive(async () => {
+      await this.ensureReady();
+
+      try {
+        const response = await this.page.evaluate(
+        async ({ fileName, base64, mimeType, type, verify, fileType }) => {
+          try {
+            const mod = await import(
+              "https://p1-kling.klingai.com/kcdn/cdn-kcdn112452/kling-web/assets/js/lora-CP-qY096.js"
+            );
+            const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+            const file = new File([bytes], fileName, { type: mimeType });
+            const result = await mod.w({
+              option: { file },
+              type,
+              verify,
+              fileType,
+            });
+            return { ok: true, data: result };
+          } catch (error) {
+            return {
+              ok: false,
+              error: {
+                name: error?.name || "Error",
+                message: error?.message || String(error),
+                status: error?.status ?? null,
+                result: error?.result ?? null,
+                brief: error?.brief ?? null,
+                errorType: error?.errorType ?? null,
+                errorTraceId: error?.errorTraceId ?? null,
+                data: error?.data ?? null,
+              },
+            };
+          }
+        },
+        { fileName, base64, mimeType, type, verify, fileType }
+      );
+
+        if (!response?.ok) {
+          throw {
+            status: response?.error?.status || 500,
+            message: response?.error?.message || "Browser upload failed",
+            data: response?.error || null,
+          };
+        }
+
+        return response.data;
+      } catch (error) {
+        throw serializeBrowserError(error);
+      }
+    });
   }
 
   async getProfileAndFeatures() {
@@ -334,5 +404,6 @@ export class KlingBrowserContextClient {
     this.page = null;
     this.moduleUrl = null;
     this.initPromise = null;
+    this.operationChain = Promise.resolve();
   }
 }

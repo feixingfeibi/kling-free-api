@@ -237,12 +237,56 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-to-video \
   }'
 ```
 
+You can also pass a local file path instead of `image_url`:
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-to-video \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/absolute/path/to/image.png",
+    "prompt": "subtle cinematic motion, natural camera push-in, realistic lighting",
+    "duration": "5",
+    "aspect_ratio": "16:9",
+    "kling_version": "3.0",
+    "model_mode": "std",
+    "enable_audio": "true"
+  }'
+```
+
 Observed verified result in this workspace:
 
 - request returned `200`
 - task was created successfully
 - example task id: `305455855145523`
 - initial task status: `5`
+
+### Upload a local image and get a Kling-ready URL
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/upload/image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/absolute/path/to/image.png"
+  }'
+```
+
+Observed verified result in this workspace:
+
+- local PNG upload succeeded
+- response included a stable `url`
+- that uploaded image URL was then used to create image-to-video successfully
+
+### Generic local file upload
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/upload/file \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/absolute/path/to/file.png",
+    "type": "image",
+    "file_type": "image"
+  }'
+```
 
 ### Submit first/last-frame video with the built-in minimal builder
 
@@ -252,6 +296,23 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/first-last-frame \
   -d '{
     "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452",
     "tail_image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_3.png?x-kcdn-pid=112452",
+    "prompt": "smooth transition from first frame to last frame, cinematic movement",
+    "duration": "5",
+    "aspect_ratio": "16:9",
+    "kling_version": "3.0",
+    "model_mode": "std",
+    "enable_audio": "true"
+  }'
+```
+
+You can also use local file paths:
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/first-last-frame \
+  -H "Content-Type: application/json" \
+  -d '{
+    "image_path": "/absolute/path/to/first.png",
+    "tail_image_path": "/absolute/path/to/last.png",
     "prompt": "smooth transition from first frame to last frame, cinematic movement",
     "duration": "5",
     "aspect_ratio": "16:9",
