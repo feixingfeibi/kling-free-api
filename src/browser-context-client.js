@@ -29,6 +29,15 @@ function serializeBrowserError(error) {
   };
 }
 
+function isRecoverablePageError(error) {
+  const message = String(error?.message || error || "");
+  return (
+    message.includes("Execution context was destroyed") ||
+    message.includes("frame was detached") ||
+    message.includes("Target page, context or browser has been closed")
+  );
+}
+
 async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -213,10 +222,11 @@ export class KlingBrowserContextClient {
     requestTimeoutMs = this.requestTimeoutMs
   ) {
     return this.runExclusive(async () => {
-      await this.ensureReady();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await this.ensureReady();
 
-      try {
-        const response = await this.page.evaluate(
+        try {
+          const response = await this.page.evaluate(
         async ({
           moduleUrl,
           requestConfig,
@@ -268,16 +278,21 @@ export class KlingBrowserContextClient {
           requestTimeoutMs,
         }
       );
-        if (!response?.ok) {
-          throw {
-            status: response?.error?.status || 500,
-            message: response?.error?.message || "Browser request failed",
-            data: response?.error || null,
-          };
+          if (!response?.ok) {
+            throw {
+              status: response?.error?.status || 500,
+              message: response?.error?.message || "Browser request failed",
+              data: response?.error || null,
+            };
+          }
+          return response.data;
+        } catch (error) {
+          if (attempt === 0 && isRecoverablePageError(error)) {
+            await this.close();
+            continue;
+          }
+          throw serializeBrowserError(error);
         }
-        return response.data;
-      } catch (error) {
-        throw serializeBrowserError(error);
       }
     });
   }
@@ -291,10 +306,11 @@ export class KlingBrowserContextClient {
     fileType = "",
   }) {
     return this.runExclusive(async () => {
-      await this.ensureReady();
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await this.ensureReady();
 
-      try {
-        const response = await this.page.evaluate(
+        try {
+          const response = await this.page.evaluate(
         async ({ fileName, base64, mimeType, type, verify, fileType }) => {
           try {
             const mod = await import(
@@ -328,17 +344,22 @@ export class KlingBrowserContextClient {
         { fileName, base64, mimeType, type, verify, fileType }
       );
 
-        if (!response?.ok) {
-          throw {
-            status: response?.error?.status || 500,
-            message: response?.error?.message || "Browser upload failed",
-            data: response?.error || null,
-          };
-        }
+          if (!response?.ok) {
+            throw {
+              status: response?.error?.status || 500,
+              message: response?.error?.message || "Browser upload failed",
+              data: response?.error || null,
+            };
+          }
 
-        return response.data;
-      } catch (error) {
-        throw serializeBrowserError(error);
+          return response.data;
+        } catch (error) {
+          if (attempt === 0 && isRecoverablePageError(error)) {
+            await this.close();
+            continue;
+          }
+          throw serializeBrowserError(error);
+        }
       }
     });
   }
