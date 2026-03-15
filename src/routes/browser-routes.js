@@ -163,12 +163,23 @@ export function registerBrowserRoutes(
 
       let resolvedUrl = url;
       if (!resolvedUrl && path) {
-        const uploadedFile = await uploadLocalFile(path, {
-          type: normalizedType,
-          fileType: normalizedType,
-        });
-        resolvedUrl = uploadedFile.upload.url;
-        uploaded[resolvedName] = uploadedFile;
+        if (normalizedType === "image") {
+          const uploadedFile = await browserClient.uploadOmniVideoReferenceImage(
+            path
+          );
+          resolvedUrl = uploadedFile.url;
+          uploaded[resolvedName] = {
+            file_path: path,
+            upload: uploadedFile,
+          };
+        } else {
+          const uploadedFile = await uploadLocalFile(path, {
+            type: normalizedType,
+            fileType: normalizedType,
+          });
+          resolvedUrl = uploadedFile.upload.url;
+          uploaded[resolvedName] = uploadedFile;
+        }
       }
 
       if (!resolvedUrl) {

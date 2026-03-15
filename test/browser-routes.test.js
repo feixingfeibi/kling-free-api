@@ -145,6 +145,58 @@ test("browser omni-video rejects video inputs with explicit unsupported code", a
   });
 });
 
+test("browser omni-video route uses browser-side reference upload for local image paths", async () => {
+  const requests = [];
+  const app = createBrowserApp({
+    browserClient: {
+      async uploadOmniVideoReferenceImage(imagePath) {
+        assert.equal(imagePath, "/tmp/reference.png");
+        return {
+          url: "https://example.com/uploaded-reference.png",
+          request: { inputs: [{ name: "image_1", url: "https://example.com/uploaded-reference.png" }] },
+        };
+      },
+      async request(config) {
+        requests.push(config);
+        if (config.url === "/api/omni/intent-recognition") {
+          return { status: 200, result: 1, data: { omniRecognition: "video-intent" } };
+        }
+        if (config.url === "/api/task/price") {
+          return { status: 200, result: 1, data: { price: { payAmount: 4000 } } };
+        }
+        throw new Error(`unexpected request url: ${config.url}`);
+      },
+      async submitTask(task) {
+        requests.push({ url: "/api/task/submit", data: task });
+        return { data: { task: { id: 456 } } };
+      },
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const result = await requestJson(baseUrl, "/v2/browser/tasks/omni-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "animate <<<image_1>>>",
+        image_path: "/tmp/reference.png",
+        aspect_ratio: "16:9",
+        duration: 5,
+      }),
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.data.submitted.data.task.id, 456);
+    assert.equal(result.body.inputs[0].url, "https://example.com/uploaded-reference.png");
+    assert.equal(result.body.uploaded.image_1.file_path, "/tmp/reference.png");
+    assert.deepEqual(
+      requests.map((item) => item.url),
+      ["/api/omni/intent-recognition", "/api/task/price", "/api/task/submit"]
+    );
+  });
+});
+
 test("browser omni-image route submits recognition, price, and task payload", async () => {
   const requests = [];
   const app = createBrowserApp({

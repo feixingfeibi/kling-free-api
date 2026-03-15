@@ -664,6 +664,91 @@ export class KlingBrowserContextClient {
     }
   }
 
+  async uploadOmniVideoReferenceImage(
+    imagePath,
+    { timeoutMs = 90000, waitAfterUploadMs = 1500 } = {}
+  ) {
+    return this.runDebugExclusive(async () =>
+      this.runLifecycleExclusive(async () => {
+        await this.ensureReady();
+        await this.waitForSharedOperationsToDrain();
+
+        const capturePage = await this.context.newPage();
+        const capturedRequests = [];
+
+        const onRequest = (request) => {
+          const url = request.url();
+          if (!url.includes("/api/omni/intent-recognition")) {
+            return;
+          }
+
+          capturedRequests.push({
+            method: request.method(),
+            url,
+            postData: request.postData() || null,
+          });
+        };
+
+        this.context.on("request", onRequest);
+
+        try {
+          await capturePage
+            .goto(`${this.siteBaseUrl}/cn/omni/new?model=video`, {
+              waitUntil: "domcontentloaded",
+              timeout: 60000,
+            })
+            .catch(() => {});
+
+          await capturePage.waitForTimeout(5000);
+
+          await capturePage.waitForFunction(
+            () => document.querySelectorAll('input[type="file"]').length >= 1,
+            { timeout: 60000 }
+          );
+
+          const fileInputs = await capturePage.$$('input[type="file"]');
+          if (!fileInputs.length) {
+            throw new Error("Omni video page did not expose any file inputs");
+          }
+
+          await fileInputs[0].setInputFiles(imagePath);
+
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < timeoutMs) {
+            const lastRequest = [...capturedRequests]
+              .reverse()
+              .find((item) => item.postData);
+
+            if (lastRequest?.postData) {
+              try {
+                const parsed = JSON.parse(lastRequest.postData);
+                const firstInputUrl = parsed?.inputs?.[0]?.url;
+                if (firstInputUrl) {
+                  await capturePage.waitForTimeout(waitAfterUploadMs);
+                  return {
+                    url: firstInputUrl,
+                    request: parsed,
+                  };
+                }
+              } catch {
+                // Keep polling until the request body becomes parseable.
+              }
+            }
+
+            await capturePage.waitForTimeout(500);
+          }
+
+          throw new Error(
+            `Timed out waiting for omni video upload request for ${imagePath}`
+          );
+        } finally {
+          this.context.off("request", onRequest);
+          await capturePage.close().catch(() => {});
+        }
+      })
+    );
+  }
+
   async captureOmniVideoFlow({
     imagePath,
     waitAfterUploadMs = 25000,

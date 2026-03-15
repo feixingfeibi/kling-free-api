@@ -370,6 +370,8 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/omni-video \
   }'
 ```
 
+Local image paths are also supported. For `omni-video`, local `image_path` inputs are now uploaded through the same browser page flow that Kling Web uses, which avoids the older upload helper path that could fail under Yoda risk checks.
+
 ## Error Model
 
 Common responses:

@@ -369,6 +369,8 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/omni-video \
   }'
 ```
 
+也支持本地 `image_path`。对于 `omni-video`，本地图片现在会走和可灵网页一致的浏览器页面上传流程，避免旧上传辅助链路在 Yoda 风控下失败。
+
 ## 错误模型
 
 常见错误：
