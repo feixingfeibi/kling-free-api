@@ -4,6 +4,10 @@ import assert from "node:assert/strict";
 import {
   buildFirstLastFrameVideoTask,
   buildImageToVideoTask,
+  buildOmniImagePriceBody,
+  buildOmniImageRecognitionBody,
+  buildOmniImageSubmitTask,
+  buildOmniImageTemplateBody,
   buildOmniVideoPriceBody,
   buildOmniVideoRecognitionBody,
   buildOmniVideoSubmitTask,
@@ -103,4 +107,45 @@ test("buildOmniVideoPriceBody and submit alias produce the same payload", () => 
   assert.equal(findArgument(price, "duration").value, "10");
   assert.equal(findArgument(price, "aspect_ratio").value, "1:1");
   assert.equal(findArgument(price, "enable_audio").value, false);
+});
+
+test("buildOmniImageRecognitionBody and template body map omni image fields", () => {
+  const recognition = buildOmniImageRecognitionBody({
+    prompt: "post-apocalyptic girl portrait",
+    kolorsVersion: "3.0-omni",
+  });
+
+  assert.equal(recognition.type, "mmu_omni_image");
+  assert.equal(findArgument(recognition, "prompt").value, "post-apocalyptic girl portrait");
+  assert.equal(findArgument(recognition, "kolors_version").value, "3.0-omni");
+
+  const template = buildOmniImageTemplateBody({
+    omniRecognition: "recognized-image-intent",
+    storyMode: true,
+  });
+
+  assert.equal(template.type, "mmu_omni_image");
+  assert.equal(findArgument(template, "story_mode").value, true);
+  assert.equal(findArgument(template, "omniRecognition").value, "recognized-image-intent");
+});
+
+test("buildOmniImagePriceBody and submit alias produce the same payload", () => {
+  const options = {
+    inputs: [{ name: "image_1", inputType: "URL", url: "https://example.com/1.png" }],
+    omniRecognition: "recognized-image-intent",
+    aspectRatio: "3:2",
+    imageCount: 2,
+    imageResolution: "2k",
+    storyMode: false,
+  };
+
+  const price = buildOmniImagePriceBody(options);
+  const submit = buildOmniImageSubmitTask(options);
+
+  assert.deepEqual(submit, price);
+  assert.equal(price.type, "mmu_omni_image");
+  assert.equal(findArgument(price, "aspect_ratio").value, "3:2");
+  assert.equal(findArgument(price, "imageCount").value, "2");
+  assert.equal(findArgument(price, "img_resolution").value, "2k");
+  assert.equal(findArgument(price, "omniRecognition").value, "recognized-image-intent");
 });

@@ -197,6 +197,55 @@ export function buildOmniVideoRecognitionBody({
   };
 }
 
+export function buildOmniImageRecognitionBody({
+  inputs = [],
+  prompt = "",
+  richPrompt = "",
+  skill = "",
+  kolorsVersion = "3.0-omni",
+  isUnLimited = false,
+  callbackPayloads,
+} = {}) {
+  return {
+    type: "mmu_omni_image",
+    inputs,
+    arguments: [
+      { name: "prompt", value: String(prompt) },
+      { name: "rich_prompt", value: String(richPrompt) },
+      { name: "skill", value: String(skill) },
+      { name: "biz", value: "klingai" },
+      { name: "kolors_version", value: String(kolorsVersion) },
+      { name: "__isUnLimited", value: Boolean(isUnLimited) },
+    ],
+    callbackPayloads:
+      callbackPayloads || [
+        { name: "settingKeys", value: "" },
+        { name: "imageMasks", value: "", resources: [] },
+        { name: "subjects", value: "[]" },
+      ],
+  };
+}
+
+export function buildOmniImageTemplateBody({
+  omniRecognition,
+  storyMode = false,
+  kolorsVersion = "3.0-omni",
+  inputs = [],
+} = {}) {
+  return {
+    type: "mmu_omni_image",
+    inputs,
+    arguments: [
+      { name: "story_mode", value: Boolean(storyMode) },
+      { name: "kolors_version", value: String(kolorsVersion) },
+      {
+        name: "omniRecognition",
+        value: omniRecognition ? String(omniRecognition) : "",
+      },
+    ],
+  };
+}
+
 export function buildOmniVideoTemplateBody({
   omniRecognition,
   taskInputs = [],
@@ -209,6 +258,55 @@ export function buildOmniVideoTemplateBody({
     omniRecognition: omniRecognition ? String(omniRecognition) : undefined,
     taskInputs,
     taskArguments,
+  };
+}
+
+export function buildOmniImagePriceBody({
+  inputs = [],
+  omniRecognition,
+  prompt = "",
+  richPrompt = "",
+  skill = "",
+  kolorsVersion = "3.0-omni",
+  aspectRatio = "auto",
+  imageCount = "2",
+  imageResolution = "2k",
+  storyMode = false,
+  isUnLimited = false,
+  preferMultiShots = false,
+  settingKeys = "aspect_ratio|imageCount|img_resolution",
+  callbackPayloads,
+} = {}) {
+  return {
+    type: "mmu_omni_image",
+    inputs,
+    arguments: [
+      { name: "prompt", value: String(prompt) },
+      { name: "rich_prompt", value: String(richPrompt) },
+      { name: "skill", value: String(skill) },
+      { name: "biz", value: "klingai" },
+      { name: "kolors_version", value: String(kolorsVersion) },
+      { name: "story_mode", value: Boolean(storyMode) },
+      { name: "aspect_ratio", value: String(aspectRatio), setByUser: false },
+      { name: "imageCount", value: String(imageCount), setByUser: false },
+      {
+        name: "img_resolution",
+        value: String(imageResolution),
+        setByUser: false,
+      },
+      {
+        name: "omniRecognition",
+        value: omniRecognition ? String(omniRecognition) : "",
+      },
+      { name: "__isUnLimited", value: Boolean(isUnLimited) },
+      { name: "prefer_multi_shots", value: Boolean(preferMultiShots) },
+    ],
+    callbackPayloads:
+      callbackPayloads || [
+        { name: "settingKeys", value: String(settingKeys) },
+        { name: "imageMasks", value: "", resources: [] },
+        { name: "subjects", value: "[]" },
+      ],
   };
 }
 
@@ -263,4 +361,8 @@ export function buildOmniVideoPriceBody({
 
 export function buildOmniVideoSubmitTask(options = {}) {
   return buildOmniVideoPriceBody(options);
+}
+
+export function buildOmniImageSubmitTask(options = {}) {
+  return buildOmniImagePriceBody(options);
 }

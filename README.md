@@ -40,8 +40,12 @@ What is working well:
 - `v2/browser/account/profile`
 - generic browser-signed request forwarding
 - text-to-video submit
+- text-to-image submit
 - image-to-video submit
 - first-last-frame submit
+- Omni image submit for:
+  - prompt-only
+  - image-reference inputs
 - Omni video submit for:
   - prompt-only
   - image-reference inputs
@@ -220,6 +224,9 @@ Then retry `GET /v2/browser/auth/check`.
 | `POST` | `/v2/browser/upload/image` | upload local image |
 | `POST` | `/v2/browser/upload/file` | upload local file |
 | `POST` | `/v2/browser/tasks/text-to-video` | built-in text-to-video |
+| `POST` | `/v2/browser/tasks/text-to-image` | built-in text-to-image |
+| `POST` | `/v2/browser/tasks/omni-image` | built-in Omni image |
+| `POST` | `/v2/browser/tasks/image-edit` | built-in image edit / reference image generation |
 | `POST` | `/v2/browser/tasks/image-to-video` | built-in image-to-video |
 | `POST` | `/v2/browser/tasks/first-last-frame` | built-in first/last-frame |
 | `POST` | `/v2/browser/tasks/omni-video` | built-in Omni video |
@@ -239,6 +246,9 @@ These routes are disabled by default and require `KLING_ENABLE_DEBUG_ROUTES=true
 | `POST` | `/v2/browser/omni/submit-config-template` | raw Omni template step |
 | `POST` | `/v2/browser/omni/video-preprocess` | raw Omni video preprocess |
 | `POST` | `/v2/browser/omni/capture-video-flow` | browser capture helper |
+| `POST` | `/v2/browser/omni/image/build-recognition-body` | body builder helper |
+| `POST` | `/v2/browser/omni/image/build-template-body` | body builder helper |
+| `POST` | `/v2/browser/omni/image/build-price-body` | body builder helper |
 | `POST` | `/v2/browser/omni/video/build-recognition-body` | body builder helper |
 | `POST` | `/v2/browser/omni/video/build-template-body` | body builder helper |
 | `POST` | `/v2/browser/omni/video/build-price-body` | body builder helper |
@@ -284,6 +294,33 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-video \
     "kling_version": "3.0",
     "model_mode": "std",
     "enable_audio": "true"
+  }'
+```
+
+### Text to image
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "post-apocalyptic East Asian girl, cinematic portrait, cold gray ruined city",
+    "aspect_ratio": "3:2",
+    "image_count": 2,
+    "image_resolution": "2k"
+  }'
+```
+
+### Image edit
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-edit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "turn <<<image_1>>> into a post-apocalyptic cinematic character poster",
+    "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452",
+    "aspect_ratio": "3:2",
+    "image_count": 2,
+    "image_resolution": "2k"
   }'
 ```
 

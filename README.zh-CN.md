@@ -39,8 +39,12 @@
 - `v2/browser/account/profile`
 - 通用浏览器签名请求透传
 - 文生视频提交
+- 文生图提交
 - 图生视频提交
 - 首尾帧提交
+- Omni 图片提交：
+  - 纯 prompt
+  - 图片引用输入
 - Omni 视频提交：
   - 纯 prompt
   - 图片引用输入
@@ -219,6 +223,9 @@ https://app.klingai.com/cn/
 | `POST` | `/v2/browser/upload/image` | 上传本地图片 |
 | `POST` | `/v2/browser/upload/file` | 上传本地文件 |
 | `POST` | `/v2/browser/tasks/text-to-video` | 文生视频 |
+| `POST` | `/v2/browser/tasks/text-to-image` | 文生图 |
+| `POST` | `/v2/browser/tasks/omni-image` | Omni 图片 |
+| `POST` | `/v2/browser/tasks/image-edit` | 图片编辑 / 参考图生图 |
 | `POST` | `/v2/browser/tasks/image-to-video` | 图生视频 |
 | `POST` | `/v2/browser/tasks/first-last-frame` | 首尾帧 |
 | `POST` | `/v2/browser/tasks/omni-video` | Omni 视频 |
@@ -238,6 +245,9 @@ https://app.klingai.com/cn/
 | `POST` | `/v2/browser/omni/submit-config-template` | 原始 Omni template 步骤 |
 | `POST` | `/v2/browser/omni/video-preprocess` | 原始 Omni 视频预处理 |
 | `POST` | `/v2/browser/omni/capture-video-flow` | 浏览器抓包辅助 |
+| `POST` | `/v2/browser/omni/image/build-recognition-body` | body builder 辅助 |
+| `POST` | `/v2/browser/omni/image/build-template-body` | body builder 辅助 |
+| `POST` | `/v2/browser/omni/image/build-price-body` | body builder 辅助 |
 | `POST` | `/v2/browser/omni/video/build-recognition-body` | body builder 辅助 |
 | `POST` | `/v2/browser/omni/video/build-template-body` | body builder 辅助 |
 | `POST` | `/v2/browser/omni/video/build-price-body` | body builder 辅助 |
@@ -283,6 +293,33 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-video \
     "kling_version": "3.0",
     "model_mode": "std",
     "enable_audio": "true"
+  }'
+```
+
+### 文生图
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/text-to-image \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "末日世界中的东亚美少女，电影感写实人像，冷灰色废墟城市",
+    "aspect_ratio": "3:2",
+    "image_count": 2,
+    "image_resolution": "2k"
+  }'
+```
+
+### 图片编辑
+
+```bash
+curl -X POST http://127.0.0.1:8010/v2/browser/tasks/image-edit \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "把<<<image_1>>>改成末日废墟风格的电影感角色海报",
+    "image_url": "https://p1-kling.klingai.com/bs2/upload-ylab-stunt/kling/resources/web_wallpaper/wallpaper_5.png?x-kcdn-pid=112452",
+    "aspect_ratio": "3:2",
+    "image_count": 2,
+    "image_resolution": "2k"
   }'
 ```
 

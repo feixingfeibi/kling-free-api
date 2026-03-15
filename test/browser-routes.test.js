@@ -76,6 +76,21 @@ test("browser debug routes are hidden by default", async () => {
   });
 });
 
+test("browser image debug build route is hidden by default", async () => {
+  const app = createBrowserApp();
+
+  await withServer(app, async (baseUrl) => {
+    const result = await requestJson(baseUrl, "/v2/browser/omni/image/build-price-body", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    assert.equal(result.status, 404);
+    assert.equal(result.body.code, "DEBUG_ROUTE_DISABLED");
+  });
+});
+
 test("browser upload image route returns VALIDATION_ERROR for missing file_path", async () => {
   const app = createBrowserApp();
 
@@ -127,5 +142,75 @@ test("browser omni-video rejects video inputs with explicit unsupported code", a
     assert.equal(result.status, 400);
     assert.equal(result.body.code, "OMNI_VIDEO_INPUT_UNSUPPORTED");
     assert.deepEqual(result.body.data.supported_input_types, ["image", "text"]);
+  });
+});
+
+test("browser omni-image route submits recognition, price, and task payload", async () => {
+  const requests = [];
+  const app = createBrowserApp({
+    browserClient: {
+      async request(config) {
+        requests.push(config);
+        if (config.url === "/api/omni/intent-recognition") {
+          return { status: 200, result: 1, data: { omniRecognition: "image-intent" } };
+        }
+        if (config.url === "/api/task/price") {
+          return { status: 200, result: 1, data: { price: { payAmount: 400 } } };
+        }
+        throw new Error(`unexpected request url: ${config.url}`);
+      },
+      async submitTask(task) {
+        requests.push({ url: "/api/task/submit", data: task });
+        return { data: { task: { id: 123 } } };
+      },
+    },
+  });
+
+  await withServer(app, async (baseUrl) => {
+    const result = await requestJson(baseUrl, "/v2/browser/tasks/omni-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "post-apocalyptic girl portrait",
+        aspect_ratio: "3:2",
+        image_count: 2,
+        image_resolution: "2k",
+      }),
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.data.submitted.data.task.id, 123);
+    assert.equal(result.body.task.type, "mmu_omni_image");
+    assert.equal(
+      result.body.task.arguments.find((item) => item.name === "img_resolution").value,
+      "2k"
+    );
+    assert.equal(
+      result.body.task.arguments.find((item) => item.name === "aspect_ratio").value,
+      "3:2"
+    );
+    assert.deepEqual(
+      requests.map((item) => item.url),
+      ["/api/omni/intent-recognition", "/api/task/price", "/api/task/submit"]
+    );
+  });
+});
+
+test("browser image-edit route requires at least one image input", async () => {
+  const app = createBrowserApp();
+
+  await withServer(app, async (baseUrl) => {
+    const result = await requestJson(baseUrl, "/v2/browser/tasks/image-edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: "turn this into a post-apocalyptic portrait",
+      }),
+    });
+
+    assert.equal(result.status, 400);
+    assert.equal(result.body.code, "VALIDATION_ERROR");
+    assert.equal(result.body.data.field, "image_url|image_path|inputs");
   });
 });

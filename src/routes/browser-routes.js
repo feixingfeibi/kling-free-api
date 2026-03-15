@@ -8,6 +8,10 @@ import { readLocalFileAsBase64 } from "../file-utils.js";
 import {
   buildFirstLastFrameVideoTask,
   buildImageToVideoTask,
+  buildOmniImagePriceBody,
+  buildOmniImageRecognitionBody,
+  buildOmniImageSubmitTask,
+  buildOmniImageTemplateBody,
   buildOmniVideoPriceBody,
   buildOmniVideoRecognitionBody,
   buildOmniVideoSubmitTask,
@@ -69,10 +73,15 @@ function normalizeOmniInputName(type, index) {
   return `${type}_${index}`;
 }
 
-function normalizeOmniInputType(type = "") {
-  const value = String(type || "").toLowerCase();
-  return value === "video" ? "video" : "image";
-}
+  function normalizeOmniInputType(type = "") {
+    const value = String(type || "").toLowerCase();
+    return value === "video" ? "video" : "image";
+  }
+
+  function normalizeOmniImageInputType(type = "") {
+    const value = String(type || "").toLowerCase();
+    return value === "image" || !value ? "image" : value;
+  }
 
 export function registerBrowserRoutes(
   app,
@@ -219,6 +228,81 @@ export function registerBrowserRoutes(
       inputs: inputs.map(({ type, ...input }) => input),
       uploaded: Object.keys(uploaded).length ? uploaded : null,
       hasVideo: inputs.some((input) => input.type === "video"),
+    };
+  }
+
+  async function resolveOmniImageInputs(body = {}) {
+    const uploaded = {};
+    const inputs = [];
+    let imageIndex = 1;
+
+    const appendInput = async ({ name, type, url, path }) => {
+      const normalizedType = normalizeOmniImageInputType(type);
+      if (normalizedType !== "image") {
+        throw buildHttpError(
+          400,
+          `Unsupported omni image input type: ${normalizedType}`,
+          {
+            code: "VALIDATION_ERROR",
+            data: {
+              field: name || `image_${imageIndex}`,
+              expected: "image",
+            },
+          }
+        );
+      }
+
+      const resolvedName = name || normalizeOmniInputName("image", imageIndex);
+      let resolvedUrl = url;
+
+      if (!resolvedUrl && path) {
+        const uploadedFile = await uploadLocalFile(path, {
+          type: "image",
+          fileType: "image",
+        });
+        resolvedUrl = uploadedFile.upload.url;
+        uploaded[resolvedName] = uploadedFile;
+      }
+
+      if (!resolvedUrl) {
+        throw buildHttpError(400, `Missing URL for omni input ${resolvedName}`, {
+          code: "VALIDATION_ERROR",
+          data: {
+            field: resolvedName,
+            expected: "url or path",
+          },
+        });
+      }
+
+      inputs.push({
+        name: resolvedName,
+        inputType: "URL",
+        url: String(resolvedUrl),
+      });
+      imageIndex += 1;
+    };
+
+    if (body.image_url || body.image_path) {
+      await appendInput({
+        name: body.image_name,
+        type: "image",
+        url: body.image_url,
+        path: body.image_path,
+      });
+    }
+
+    for (const item of Array.isArray(body.inputs) ? body.inputs : []) {
+      await appendInput({
+        name: item?.name,
+        type: item?.type,
+        url: item?.url,
+        path: item?.path,
+      });
+    }
+
+    return {
+      inputs,
+      uploaded: Object.keys(uploaded).length ? uploaded : null,
     };
   }
 
@@ -428,6 +512,45 @@ export function registerBrowserRoutes(
         });
 
         res.json({ ok: true, data, parsed: parseCapturedEvents(data.events) });
+      } catch (error) {
+        sendError(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/v2/browser/omni/image/build-recognition-body",
+    requireDebugRoutesEnabled,
+    async (req, res) => {
+      try {
+        const body = buildOmniImageRecognitionBody(req.body || {});
+        res.json({ ok: true, data: body });
+      } catch (error) {
+        sendError(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/v2/browser/omni/image/build-template-body",
+    requireDebugRoutesEnabled,
+    async (req, res) => {
+      try {
+        const body = buildOmniImageTemplateBody(req.body || {});
+        res.json({ ok: true, data: body });
+      } catch (error) {
+        sendError(res, error);
+      }
+    }
+  );
+
+  app.post(
+    "/v2/browser/omni/image/build-price-body",
+    requireDebugRoutesEnabled,
+    async (req, res) => {
+      try {
+        const body = buildOmniImagePriceBody(req.body || {});
+        res.json({ ok: true, data: body });
       } catch (error) {
         sendError(res, error);
       }
@@ -658,6 +781,127 @@ export function registerBrowserRoutes(
       sendError(res, error);
     }
   });
+
+  async function handleBrowserOmniImageTask(req, res, { requireInput = false } = {}) {
+    try {
+      const {
+        prompt = "",
+        rich_prompt = "",
+        skill = "",
+        kolors_version,
+        aspect_ratio,
+        image_count,
+        image_resolution,
+        img_resolution,
+        story_mode,
+        callback_payloads,
+        poll = false,
+        poll_interval_ms,
+        poll_timeout_ms,
+      } = req.body || {};
+
+      const { inputs, uploaded } = await resolveOmniImageInputs(req.body || {});
+
+      if (requireInput && !inputs.length) {
+        throw buildHttpError(
+          400,
+          "image-edit route requires at least one image input",
+          {
+            code: "VALIDATION_ERROR",
+            data: {
+              field: "image_url|image_path|inputs",
+              expected: "at least one image input",
+            },
+          }
+        );
+      }
+
+      const recognitionBody = buildOmniImageRecognitionBody({
+        inputs,
+        prompt,
+        richPrompt: rich_prompt,
+        skill,
+        kolorsVersion: kolors_version,
+        callbackPayloads: callback_payloads,
+      });
+
+      const recognition = await browserClient.request({
+        url: "/api/omni/intent-recognition",
+        method: "POST",
+        data: recognitionBody,
+      });
+
+      const omniRecognition = recognition?.data?.omniRecognition;
+      if (!omniRecognition) {
+        throw buildUpstreamResponseError(
+          "Omni image intent recognition did not return omniRecognition",
+          {
+            response: recognition,
+          }
+        );
+      }
+
+      const task = buildOmniImageSubmitTask({
+        inputs,
+        omniRecognition,
+        prompt,
+        richPrompt: rich_prompt,
+        skill,
+        kolorsVersion: kolors_version,
+        aspectRatio: aspect_ratio,
+        imageCount: image_count,
+        imageResolution: image_resolution || img_resolution,
+        storyMode: story_mode,
+        callbackPayloads: callback_payloads,
+      });
+
+      const price = await browserClient.request({
+        url: "/api/task/price",
+        method: "POST",
+        data: buildOmniImagePriceBody({
+          inputs,
+          omniRecognition,
+          prompt,
+          richPrompt: rich_prompt,
+          skill,
+          kolorsVersion: kolors_version,
+          aspectRatio: aspect_ratio,
+          imageCount: image_count,
+          imageResolution: image_resolution || img_resolution,
+          storyMode: story_mode,
+          callbackPayloads: callback_payloads,
+        }),
+      });
+
+      const { submitted, final } = await submitBrowserTaskAndMaybePoll(task, {
+        poll,
+        pollIntervalMs: poll_interval_ms,
+        pollTimeoutMs: poll_timeout_ms,
+      });
+
+      res.json({
+        ok: true,
+        data: poll
+          ? { recognition, price, submitted, final }
+          : { recognition, price, submitted },
+        task,
+        inputs,
+        uploaded,
+      });
+    } catch (error) {
+      sendError(res, error);
+    }
+  }
+
+  app.post("/v2/browser/tasks/omni-image", (req, res) =>
+    handleBrowserOmniImageTask(req, res)
+  );
+  app.post("/v2/browser/tasks/text-to-image", (req, res) =>
+    handleBrowserOmniImageTask(req, res)
+  );
+  app.post("/v2/browser/tasks/image-edit", (req, res) =>
+    handleBrowserOmniImageTask(req, res, { requireInput: true })
+  );
 
   app.post("/v2/browser/tasks/first-last-frame", async (req, res) => {
     try {
