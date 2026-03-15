@@ -4,6 +4,7 @@
 [![Express](https://img.shields.io/badge/Express-4.x-000000?logo=express&logoColor=white)](https://expressjs.com/)
 [![Playwright](https://img.shields.io/badge/Playwright-browser--signed-45BA63?logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Kling Web](https://img.shields.io/badge/Kling-consumer_web_route-111111)](https://app.klingai.com/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 **English** | [简体中文](./README.zh-CN.md)
 
@@ -98,6 +99,18 @@ You can upload local images and files, then reuse the returned Kling-ready URLs 
 npm install
 ```
 
+Prerequisites:
+
+- Node.js `18+`
+- A local Chrome / Chromium installation
+- `python3` with `browser_cookie3` if you want automatic cookie loading from your browser
+
+Install the optional Python dependency:
+
+```bash
+python3 -m pip install browser-cookie3
+```
+
 ### 2. Configure
 
 Copy `.env.example` to `.env`.
@@ -111,12 +124,15 @@ Important fields:
 - `KLING_BROWSER_EXECUTABLE_PATH`
 - `KLING_BROWSER_USER_DATA_DIR`
 - `KLING_BROWSER_HEADLESS`
+- `KLING_ENABLE_DEBUG_ROUTES`
 - `KLING_BROWSER_REQUEST_TIMEOUT_MS`
 - `KLING_BROWSER_MODULE_URL`
 
 Notes:
 
 - If `KLING_COOKIE` is empty, the service will try to read Kling cookies from local Chrome.
+- If `KLING_BROWSER_EXECUTABLE_PATH` is empty, the service will try to auto-discover Chrome / Chromium.
+- Reverse-engineering helper routes are disabled by default. Set `KLING_ENABLE_DEBUG_ROUTES=true` only when you need capture/build helpers.
 - The default consumer site is `https://app.klingai.com`.
 - The default API origin is `https://api-app-cn.klingai.com`.
 
@@ -138,6 +154,15 @@ Default local address:
 http://127.0.0.1:8010
 ```
 
+### 4. Verify
+
+```bash
+npm run check
+npm test
+npm run smoke
+SMOKE_AUTH=true npm run smoke
+```
+
 ## Authentication Flow
 
 Check service health:
@@ -145,6 +170,8 @@ Check service health:
 ```bash
 curl http://127.0.0.1:8010/health
 ```
+
+The health payload also reports whether a browser executable was found and whether `python3` / `browser_cookie3` is available for cookie auto-loading.
 
 Check whether browser auth is still valid:
 
@@ -190,16 +217,31 @@ Then retry `GET /v2/browser/auth/check`.
 | `GET` | `/v2/browser/health` | browser-side runtime health |
 | `GET` | `/v2/browser/auth/check` | auth status |
 | `GET` | `/v2/browser/account/profile` | profile and features |
-| `POST` | `/v2/browser/request` | generic signed request proxy |
 | `POST` | `/v2/browser/upload/image` | upload local image |
 | `POST` | `/v2/browser/upload/file` | upload local file |
-| `POST` | `/v2/browser/tasks/submit` | submit raw task body |
 | `POST` | `/v2/browser/tasks/text-to-video` | built-in text-to-video |
 | `POST` | `/v2/browser/tasks/image-to-video` | built-in image-to-video |
 | `POST` | `/v2/browser/tasks/first-last-frame` | built-in first/last-frame |
 | `POST` | `/v2/browser/tasks/omni-video` | built-in Omni video |
 | `GET` | `/v2/browser/tasks/:taskId` | task status |
 | `GET` | `/v2/browser/tasks/:taskId/poll` | polling helper |
+
+### Debug-only browser routes
+
+These routes are disabled by default and require `KLING_ENABLE_DEBUG_ROUTES=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/v2/browser/request` | generic signed request proxy |
+| `POST` | `/v2/browser/tasks/submit` | submit raw task body |
+| `GET` | `/v2/browser/omni/recommend` | low-level Omni recommendation lookup |
+| `POST` | `/v2/browser/omni/intent-recognition` | raw Omni intent step |
+| `POST` | `/v2/browser/omni/submit-config-template` | raw Omni template step |
+| `POST` | `/v2/browser/omni/video-preprocess` | raw Omni video preprocess |
+| `POST` | `/v2/browser/omni/capture-video-flow` | browser capture helper |
+| `POST` | `/v2/browser/omni/video/build-recognition-body` | body builder helper |
+| `POST` | `/v2/browser/omni/video/build-template-body` | body builder helper |
+| `POST` | `/v2/browser/omni/video/build-price-body` | body builder helper |
 
 ### Legacy / low-level routes
 
@@ -215,6 +257,8 @@ Then retry `GET /v2/browser/auth/check`.
 ## Examples
 
 ### Generic signed browser request
+
+This example requires `KLING_ENABLE_DEBUG_ROUTES=true`.
 
 ```bash
 curl -X POST http://127.0.0.1:8010/v2/browser/request \
@@ -307,11 +351,14 @@ Common responses:
 .
 ├── src/
 │   ├── server.js
+│   ├── browser-executable.js
 │   ├── browser-context-client.js
 │   ├── kling-web-client.js
 │   ├── task-builders.js
 │   └── auth-errors.js
 ├── scripts/
+├── test/
+├── LICENSE
 ├── .env.example
 └── README.md
 ```

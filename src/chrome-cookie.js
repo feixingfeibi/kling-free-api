@@ -1,7 +1,29 @@
 import { execFileSync } from "node:child_process";
 
-function escapePython(value) {
-  return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+export function probeChromeCookieSupport() {
+  try {
+    execFileSync("python3", ["-c", "import browser_cookie3"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return {
+      ok: true,
+      dependency: "browser_cookie3",
+      runtime: "python3",
+      message: "python3 and browser_cookie3 are available",
+    };
+  } catch (error) {
+    const stderr =
+      typeof error?.stderr === "string" ? error.stderr.trim() : "";
+    return {
+      ok: false,
+      dependency: "browser_cookie3",
+      runtime: "python3",
+      message:
+        stderr ||
+        "python3 or browser_cookie3 is unavailable; automatic Chrome cookie loading will be disabled",
+    };
+  }
 }
 
 export function loadKlingCookieFromChrome() {

@@ -1,11 +1,35 @@
 {
   "name": "kling-free-api",
   "version": "0.1.0",
-  "private": true,
+  "description": "Local browser-signed wrapper for Kling consumer web APIs.",
+  "license": "MIT",
+  "private": false,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/feixingfeibi/kling-free-api.git"
+  },
+  "bugs": {
+    "url": "https://github.com/feixingfeibi/kling-free-api/issues"
+  },
+  "homepage": "https://github.com/feixingfeibi/kling-free-api#readme",
+  "keywords": [
+    "kling",
+    "klingai",
+    "playwright",
+    "express",
+    "browser-signed",
+    "video-generation"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "start:local": "node src/server.js"
+    "start:local": "node src/server.js",
+    "test": "node --test",
+    "check": "node scripts/check.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "axios": "^1.9.0",

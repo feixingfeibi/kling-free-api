@@ -4,6 +4,7 @@
 [![Express](https://img.shields.io/badge/Express-4.x-000000?logo=express&logoColor=white)](https://expressjs.com/)
 [![Playwright](https://img.shields.io/badge/Playwright-browser--signed-45BA63?logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Kling Web](https://img.shields.io/badge/Kling-consumer_web_route-111111)](https://app.klingai.com/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 [English](./README.md) | **简体中文**
 
@@ -97,6 +98,18 @@
 npm install
 ```
 
+前置要求：
+
+- Node.js `18+`
+- 本机安装 Chrome 或 Chromium
+- 如果要自动读取浏览器 Cookie，需要 `python3` 和 `browser_cookie3`
+
+安装可选的 Python 依赖：
+
+```bash
+python3 -m pip install browser-cookie3
+```
+
 ### 2. 配置环境变量
 
 把 `.env.example` 复制为 `.env`。
@@ -110,12 +123,15 @@ npm install
 - `KLING_BROWSER_EXECUTABLE_PATH`
 - `KLING_BROWSER_USER_DATA_DIR`
 - `KLING_BROWSER_HEADLESS`
+- `KLING_ENABLE_DEBUG_ROUTES`
 - `KLING_BROWSER_REQUEST_TIMEOUT_MS`
 - `KLING_BROWSER_MODULE_URL`
 
 说明：
 
 - 如果 `KLING_COOKIE` 为空，服务会尝试从本机 Chrome 自动读取 Kling Cookie
+- 如果 `KLING_BROWSER_EXECUTABLE_PATH` 为空，服务会自动尝试发现本机 Chrome / Chromium
+- 逆向辅助路由默认关闭。只有在需要抓取 / build helper 时才设置 `KLING_ENABLE_DEBUG_ROUTES=true`
 - 默认网页地址是 `https://app.klingai.com`
 - 默认 API 域名是 `https://api-app-cn.klingai.com`
 
@@ -137,6 +153,15 @@ npm start
 http://127.0.0.1:8010
 ```
 
+### 4. 验证
+
+```bash
+npm run check
+npm test
+npm run smoke
+SMOKE_AUTH=true npm run smoke
+```
+
 ## 鉴权流程
 
 检查服务健康状态：
@@ -144,6 +169,8 @@ http://127.0.0.1:8010
 ```bash
 curl http://127.0.0.1:8010/health
 ```
+
+`/health` 现在也会返回浏览器可执行文件是否已找到，以及 `python3` / `browser_cookie3` 是否可用于自动读取 Cookie。
 
 检查浏览器登录态是否有效：
 
@@ -189,16 +216,31 @@ https://app.klingai.com/cn/
 | `GET` | `/v2/browser/health` | 浏览器运行时健康检查 |
 | `GET` | `/v2/browser/auth/check` | 登录态检查 |
 | `GET` | `/v2/browser/account/profile` | 账号资料与 features |
-| `POST` | `/v2/browser/request` | 通用签名请求透传 |
 | `POST` | `/v2/browser/upload/image` | 上传本地图片 |
 | `POST` | `/v2/browser/upload/file` | 上传本地文件 |
-| `POST` | `/v2/browser/tasks/submit` | 提交原始 task body |
 | `POST` | `/v2/browser/tasks/text-to-video` | 文生视频 |
 | `POST` | `/v2/browser/tasks/image-to-video` | 图生视频 |
 | `POST` | `/v2/browser/tasks/first-last-frame` | 首尾帧 |
 | `POST` | `/v2/browser/tasks/omni-video` | Omni 视频 |
 | `GET` | `/v2/browser/tasks/:taskId` | 查任务状态 |
 | `GET` | `/v2/browser/tasks/:taskId/poll` | 轮询任务 |
+
+### 仅调试开放的浏览器路由
+
+这些路由默认关闭，只有设置 `KLING_ENABLE_DEBUG_ROUTES=true` 才会开放。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/v2/browser/request` | 通用签名请求透传 |
+| `POST` | `/v2/browser/tasks/submit` | 提交原始 task body |
+| `GET` | `/v2/browser/omni/recommend` | 低层 Omni 推荐查询 |
+| `POST` | `/v2/browser/omni/intent-recognition` | 原始 Omni intent 步骤 |
+| `POST` | `/v2/browser/omni/submit-config-template` | 原始 Omni template 步骤 |
+| `POST` | `/v2/browser/omni/video-preprocess` | 原始 Omni 视频预处理 |
+| `POST` | `/v2/browser/omni/capture-video-flow` | 浏览器抓包辅助 |
+| `POST` | `/v2/browser/omni/video/build-recognition-body` | body builder 辅助 |
+| `POST` | `/v2/browser/omni/video/build-template-body` | body builder 辅助 |
+| `POST` | `/v2/browser/omni/video/build-price-body` | body builder 辅助 |
 
 ### 低层 / legacy 路由
 
@@ -214,6 +256,8 @@ https://app.klingai.com/cn/
 ## 使用示例
 
 ### 通用浏览器签名请求
+
+这个示例需要先设置 `KLING_ENABLE_DEBUG_ROUTES=true`。
 
 ```bash
 curl -X POST http://127.0.0.1:8010/v2/browser/request \
@@ -306,11 +350,14 @@ curl -X POST http://127.0.0.1:8010/v2/browser/tasks/omni-video \
 .
 ├── src/
 │   ├── server.js
+│   ├── browser-executable.js
 │   ├── browser-context-client.js
 │   ├── kling-web-client.js
 │   ├── task-builders.js
 │   └── auth-errors.js
 ├── scripts/
+├── test/
+├── LICENSE
 ├── .env.example
 └── README.md
 ```

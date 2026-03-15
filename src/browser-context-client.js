@@ -2,6 +2,10 @@ import path from "node:path";
 
 import { chromium } from "playwright-core";
 import {
+  buildBrowserExecutableNotFoundError,
+  resolveBrowserExecutablePath,
+} from "./browser-executable.js";
+import {
   buildAuthExpiredError,
   isAuthExpiredError,
   isAuthExpiredResponseData,
@@ -101,13 +105,68 @@ export class KlingBrowserContextClient {
     this.moduleUrl = moduleUrl || null;
     this.guardModuleUrl = null;
     this.initPromise = null;
-    this.operationChain = Promise.resolve();
+    this.lifecycleChain = Promise.resolve();
+    this.debugChain = Promise.resolve();
+    this.activeSharedOperations = 0;
+    this.activeSharedOperationWaiters = [];
   }
 
-  async runExclusive(task) {
-    const run = this.operationChain.then(task, task);
-    this.operationChain = run.catch(() => {});
+  async runLifecycleExclusive(task) {
+    const run = this.lifecycleChain.then(task, task);
+    this.lifecycleChain = run.catch(() => {});
     return run;
+  }
+
+  async runDebugExclusive(task) {
+    const run = this.debugChain.then(task, task);
+    this.debugChain = run.catch(() => {});
+    return run;
+  }
+
+  async warmup() {
+    return this.runLifecycleExclusive(async () => {
+      await this.ensureReady();
+    });
+  }
+
+  async waitForSharedOperationsToDrain() {
+    if (this.activeSharedOperations === 0) {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      this.activeSharedOperationWaiters.push(resolve);
+    });
+  }
+
+  releaseSharedOperation() {
+    this.activeSharedOperations = Math.max(0, this.activeSharedOperations - 1);
+
+    if (this.activeSharedOperations === 0) {
+      const waiters = this.activeSharedOperationWaiters.splice(0);
+      for (const resolve of waiters) {
+        resolve();
+      }
+    }
+  }
+
+  async withSharedPage(task) {
+    const page = await this.runLifecycleExclusive(async () => {
+      await this.ensureReady();
+
+      if (!this.page || this.page.isClosed()) {
+        throw new Error("Browser page is unavailable");
+      }
+
+      this.activeSharedOperations += 1;
+      return this.page;
+    });
+
+    try {
+      return await task(page);
+    } finally {
+      this.releaseSharedOperation();
+    }
   }
 
   async ensureReady() {
@@ -121,8 +180,13 @@ export class KlingBrowserContextClient {
     }
 
     this.initPromise = (async () => {
+      const executable = resolveBrowserExecutablePath(this.executablePath);
+      if (!executable.path) {
+        throw buildBrowserExecutableNotFoundError(executable.candidates);
+      }
+
       this.browser = await chromium.launch({
-        executablePath: this.executablePath,
+        executablePath: executable.path,
         headless: this.headless,
         args: ["--disable-blink-features=AutomationControlled"],
       });
@@ -300,16 +364,15 @@ export class KlingBrowserContextClient {
     requestTimeoutMs = this.requestTimeoutMs,
     includeOrigin = false
   ) {
-    return this.runExclusive(async () => {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        await this.ensureReady();
-        const requestAcceptLanguage = resolveAcceptLanguage(
-          this.acceptLanguage,
-          localeCode
-        );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const requestAcceptLanguage = resolveAcceptLanguage(
+        this.acceptLanguage,
+        localeCode
+      );
 
-        try {
-          const response = await this.page.evaluate(
+      try {
+        const response = await this.withSharedPage((page) =>
+          page.evaluate(
         async ({
           guardModuleUrl,
           apiBaseUrl,
@@ -510,30 +573,30 @@ export class KlingBrowserContextClient {
           requestTimeoutMs,
           includeOrigin,
         }
+        )
       );
-          if (!response?.ok) {
-            throw normalizeAuthError({
-              status: response?.error?.status || 500,
-              message: response?.error?.message || "Browser request failed",
-              data: response?.error || null,
-            });
-          }
-          if (isAuthExpiredResponseData(response.data)) {
-            throw buildAuthExpiredError(response.data);
-          }
-          return includeOrigin ? response : response.data;
-        } catch (error) {
-          if (
-            attempt === 0 &&
-            (isRecoverablePageError(error) || isAuthExpiredError(error))
-          ) {
-            await this.close();
-            continue;
-          }
-          throw serializeBrowserError(error);
+        if (!response?.ok) {
+          throw normalizeAuthError({
+            status: response?.error?.status || 500,
+            message: response?.error?.message || "Browser request failed",
+            data: response?.error || null,
+          });
         }
+        if (isAuthExpiredResponseData(response.data)) {
+          throw buildAuthExpiredError(response.data);
+        }
+        return includeOrigin ? response : response.data;
+      } catch (error) {
+        if (
+          attempt === 0 &&
+          (isRecoverablePageError(error) || isAuthExpiredError(error))
+        ) {
+          await this.close();
+          continue;
+        }
+        throw serializeBrowserError(error);
       }
-    });
+    }
   }
 
   async uploadFile({
@@ -544,12 +607,10 @@ export class KlingBrowserContextClient {
     verify = true,
     fileType = "",
   }) {
-    return this.runExclusive(async () => {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        await this.ensureReady();
-
-        try {
-          const response = await this.page.evaluate(
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await this.withSharedPage((page) =>
+          page.evaluate(
         async ({ fileName, base64, mimeType, type, verify, fileType }) => {
           try {
             const mod = await import(
@@ -581,26 +642,26 @@ export class KlingBrowserContextClient {
           }
         },
         { fileName, base64, mimeType, type, verify, fileType }
+        )
       );
 
-          if (!response?.ok) {
-            throw {
-              status: response?.error?.status || 500,
-              message: response?.error?.message || "Browser upload failed",
-              data: response?.error || null,
-            };
-          }
-
-          return response.data;
-        } catch (error) {
-          if (attempt === 0 && isRecoverablePageError(error)) {
-            await this.close();
-            continue;
-          }
-          throw serializeBrowserError(error);
+        if (!response?.ok) {
+          throw {
+            status: response?.error?.status || 500,
+            message: response?.error?.message || "Browser upload failed",
+            data: response?.error || null,
+          };
         }
+
+        return response.data;
+      } catch (error) {
+        if (attempt === 0 && isRecoverablePageError(error)) {
+          await this.close();
+          continue;
+        }
+        throw serializeBrowserError(error);
       }
-    });
+    }
   }
 
   async captureOmniVideoFlow({
@@ -608,130 +669,112 @@ export class KlingBrowserContextClient {
     waitAfterUploadMs = 25000,
     maxEvents = 50,
   }) {
-    return this.runExclusive(async () => {
-      if (!this.browser || !this.context) {
-        this.browser = await chromium.launch({
-          executablePath: this.executablePath,
-          headless: this.headless,
-          args: ["--disable-blink-features=AutomationControlled"],
-        });
+    return this.runDebugExclusive(async () =>
+      this.runLifecycleExclusive(async () => {
+        await this.ensureReady();
+        await this.waitForSharedOperationsToDrain();
 
-        this.context = await this.browser.newContext({
-          viewport: { width: 1440, height: 960 },
-          locale: "zh-CN",
-          timezoneId: this.timeZone,
-          extraHTTPHeaders: {
-            "Accept-Language": this.acceptLanguage,
-          },
-        });
+        const capturePage = await this.context.newPage();
+        const events = [];
 
-        {
-          const freshCookieHeader = loadKlingCookieFromChrome() || this.cookie;
-          const cookies = buildBrowserCookies(freshCookieHeader);
-          if (cookies.length) {
-            await this.context.addCookies(cookies);
+        const onRequest = (request) => {
+          const url = request.url();
+          if (
+            url.includes("/api/omni/") ||
+            url.includes("/api/task/") ||
+            url.includes("/api/upload/")
+          ) {
+            events.push({
+              type: "request",
+              method: request.method(),
+              url,
+              postData: request.postData() || null,
+            });
           }
-        }
-      }
+        };
 
-      const capturePage = await this.context.newPage();
-      const events = [];
-
-      const onRequest = (request) => {
-        const url = request.url();
-        if (
-          url.includes("/api/omni/") ||
-          url.includes("/api/task/") ||
-          url.includes("/api/upload/")
-        ) {
-          events.push({
-            type: "request",
-            method: request.method(),
-            url,
-            postData: request.postData() || null,
-          });
-        }
-      };
-
-      const onResponse = async (response) => {
-        const url = response.url();
-        if (
-          url.includes("/api/omni/") ||
-          url.includes("/api/task/") ||
-          url.includes("/api/upload/")
-        ) {
-          let body = null;
-          try {
-            const contentType = response.headers()["content-type"] || "";
-            if (contentType.includes("application/json")) {
-              body = await response.json();
+        const onResponse = async (response) => {
+          const url = response.url();
+          if (
+            url.includes("/api/omni/") ||
+            url.includes("/api/task/") ||
+            url.includes("/api/upload/")
+          ) {
+            let body = null;
+            try {
+              const contentType = response.headers()["content-type"] || "";
+              if (contentType.includes("application/json")) {
+                body = await response.json();
+              }
+            } catch {
+              // Ignore unreadable response bodies.
             }
-          } catch {
-            // Ignore unreadable response bodies.
+
+            events.push({
+              type: "response",
+              status: response.status(),
+              url,
+              body,
+            });
+          }
+        };
+
+        this.context.on("request", onRequest);
+        this.context.on("response", onResponse);
+
+        try {
+          await capturePage
+            .goto(`${this.siteBaseUrl}/cn/omni/new?model=video`, {
+              waitUntil: "domcontentloaded",
+              timeout: 60000,
+            })
+            .catch(() => {});
+
+          await capturePage.waitForTimeout(15000);
+
+          await capturePage
+            .waitForFunction(
+              () => document.querySelectorAll('input[type="file"]').length >= 2,
+              { timeout: 60000 }
+            )
+            .catch(() => {});
+
+          const fileInputs = await capturePage.$$('input[type="file"]');
+          if (!fileInputs.length) {
+            const debugState = await capturePage.evaluate(() => ({
+              url: location.href,
+              title: document.title,
+              bodyText: document.body.innerText.slice(0, 1200),
+              inputCount: document.querySelectorAll('input[type="file"]').length,
+            }));
+            throw new Error(
+              `Omni page did not expose file inputs: ${JSON.stringify(debugState)}`
+            );
           }
 
-          events.push({
-            type: "response",
-            status: response.status(),
-            url,
-            body,
-          });
-        }
-      };
+          await fileInputs[0].setInputFiles(imagePath);
 
-      this.context.on("request", onRequest);
-      this.context.on("response", onResponse);
+          await capturePage.waitForTimeout(waitAfterUploadMs);
 
-      try {
-        await capturePage.goto(`${this.siteBaseUrl}/cn/omni/new?model=video`, {
-          waitUntil: "domcontentloaded",
-          timeout: 60000,
-        }).catch(() => {});
-
-        await capturePage.waitForTimeout(15000);
-
-        await capturePage
-          .waitForFunction(
-            () => document.querySelectorAll('input[type="file"]').length >= 2,
-            { timeout: 60000 }
-          )
-          .catch(() => {});
-
-        const fileInputs = await capturePage.$$('input[type="file"]');
-        if (!fileInputs.length) {
-          const debugState = await capturePage.evaluate(() => ({
+          const state = await capturePage.evaluate(() => ({
             url: location.href,
             title: document.title,
-            bodyText: document.body.innerText.slice(0, 1200),
-            inputCount: document.querySelectorAll('input[type="file"]').length,
+            bodyText: document.body.innerText.slice(0, 2000),
+            uploadInputs: document.querySelectorAll('input[type="file"]').length,
+            proseMirrorCount: document.querySelectorAll(".ProseMirror").length,
           }));
-          throw new Error(
-            `Omni page did not expose file inputs: ${JSON.stringify(debugState)}`
-          );
+
+          return {
+            events: events.slice(0, maxEvents),
+            state,
+          };
+        } finally {
+          this.context.off("request", onRequest);
+          this.context.off("response", onResponse);
+          await capturePage.close().catch(() => {});
         }
-
-        await fileInputs[0].setInputFiles(imagePath);
-
-        await capturePage.waitForTimeout(waitAfterUploadMs);
-
-        const state = await capturePage.evaluate(() => ({
-          url: location.href,
-          title: document.title,
-          bodyText: document.body.innerText.slice(0, 2000),
-          uploadInputs: document.querySelectorAll('input[type="file"]').length,
-          proseMirrorCount: document.querySelectorAll(".ProseMirror").length,
-        }));
-
-        return {
-          events: events.slice(0, maxEvents),
-          state,
-        };
-      } finally {
-        this.context.off("request", onRequest);
-        this.context.off("response", onResponse);
-        await capturePage.close().catch(() => {});
-      }
-    });
+      })
+    );
   }
 
   async getProfileAndFeatures() {
@@ -784,18 +827,21 @@ export class KlingBrowserContextClient {
   }
 
   async close() {
-    if (this.context) {
-      await this.context.close();
-    }
-    if (this.browser) {
-      await this.browser.close();
-    }
-    this.browser = null;
-    this.context = null;
-    this.page = null;
-    this.moduleUrl = null;
-    this.guardModuleUrl = null;
-    this.initPromise = null;
-    this.operationChain = Promise.resolve();
+    return this.runLifecycleExclusive(async () => {
+      await this.waitForSharedOperationsToDrain();
+
+      if (this.context) {
+        await this.context.close();
+      }
+      if (this.browser) {
+        await this.browser.close();
+      }
+      this.browser = null;
+      this.context = null;
+      this.page = null;
+      this.moduleUrl = null;
+      this.guardModuleUrl = null;
+      this.initPromise = null;
+    });
   }
 }
